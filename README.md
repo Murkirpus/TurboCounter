@@ -196,7 +196,7 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/counter/counter_secure_db_cache.php';
 
 Административная панель доступна по адресу:
 ```
-http://ваш-сайт.com/counter/admin/
+http://ваш-сайт.com/counter/index.php
 ```
 
 Используйте логин и пароль, созданные ранее, для входа.
