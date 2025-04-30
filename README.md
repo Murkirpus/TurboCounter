@@ -1,36 +1,37 @@
-Современный счетчик посещений с геолокацией и защитой от DDoS
-  Мощный инструмент для отслеживания и анализа посещений сайта с низкой нагрузкой на сервер
+# TurboCounter
 
+Modern visitor counter with geolocation and DDoS protection
+A powerful tool for tracking and analyzing website visits with low server load
 
-## 📋 Обзор
+## 📋 Overview
 
-TurboCounter — это продвинутое решение для веб-мастеров, которым необходим надежный способ сбора и анализа статистики посещений своего сайта. Счетчик оснащен функцией геолокации посетителей, визуализацией данных и эффективной системой защиты от DDoS-атак.
+TurboCounter is an advanced solution for webmasters who need a reliable way to collect and analyze visitor statistics for their website. The counter is equipped with visitor geolocation functionality, data visualization, and an effective DDoS protection system.
 
-## ✨ Особенности
+## ✨ Features
 
-- 🛡️ **Защита от DDoS-атак**: Оптимизирован для высоких нагрузок с интеллектуальной системой очередей
-- 🌍 **Геолокация посетителей**: Определение страны, города и координат по IP с высокой точностью
-- 🚀 **Кэширование в базе данных**: Высокая производительность благодаря многоуровневому кэшированию
-- 📊 **Административная панель**: Наглядная статистика с интерактивными графиками и детальными таблицами
-- 📱 **Распознавание устройств**: Точное определение браузеров, мобильных устройств и планшетов
-- 🗺️ **Визуализация на карте**: Отображение посетителей на интерактивной карте мира в реальном времени
-- 🔍 **Анализ источников трафика**: Детальное отслеживание каналов привлечения посетителей
-- 📈 **Сравнение периодов**: Мощные инструменты для анализа динамики посещаемости
-- 🔥 **Тепловые карты активности**: Визуализация активности по часам и дням недели
+- 🛡️ **DDoS Protection**: Optimized for high loads with an intelligent queueing system
+- 🌍 **Visitor Geolocation**: Determine country, city, and coordinates by IP with high accuracy
+- 🚀 **Database Caching**: High performance through multi-level caching
+- 📊 **Administrative Panel**: Clear statistics with interactive charts and detailed tables
+- 📱 **Device Recognition**: Accurate detection of browsers, mobile devices, and tablets
+- 🗺️ **Map Visualization**: Display visitors on an interactive world map in real-time
+- 🔍 **Traffic Source Analysis**: Detailed tracking of visitor acquisition channels
+- 📈 **Period Comparison**: Powerful tools for analyzing traffic dynamics
+- 🔥 **Activity Heatmaps**: Visualization of activity by hours and days of the week
 
-## 🔧 Требования
+## 🔧 Requirements
 
-- PHP 7.0 или выше
+- PHP 7.0 or higher
 - MySQL/MariaDB
-- Доступ к файловой системе сервера
-- Права на создание и запись в директории
-- Опционально: API-ключ ipinfo.io для расширенной геолокации
+- Access to server file system
+- Permissions to create and write to directories
+- Optional: ipinfo.io API key for enhanced geolocation
 
-## 🚀 Установка и настройка
+## 🚀 Installation and Setup
 
-### 1. Подготовка базы данных
+### 1. Database Preparation
 
-Создайте новую базу данных и пользователя для счетчика:
+Create a new database and user for the counter:
 
 ```sql
 CREATE DATABASE site_counter;
@@ -39,71 +40,71 @@ GRANT ALL PRIVILEGES ON site_counter.* TO 'site_counter'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-### 2. Загрузка файлов
+### 2. File Download
 
-1. Скачайте все файлы с [репозитория GitHub](https://github.com/Murkirpus/TurboCounter) и распакуйте их в директорию `/counter/` на вашем сервере.
-2. Создайте необходимые директории:
+1. Download all files from the [GitHub repository](https://github.com/Murkirpus/TurboCounter) and extract them to the `/counter/` directory on your server.
+2. Create the necessary directories:
    ```bash
-   mkdir -p /путь/к/вашему/сайту/counter/queue
-   mkdir -p /путь/к/вашему/сайту/counter/cache
+   mkdir -p /path/to/your/site/counter/queue
+   mkdir -p /path/to/your/site/counter/cache
    ```
-3. Установите корректные права доступа:
+3. Set the correct access permissions:
    ```bash
-   chmod 755 /путь/к/вашему/сайту/counter
-   chmod 755 /путь/к/вашему/сайту/counter/queue
-   chmod 755 /путь/к/вашему/сайту/counter/cache
+   chmod 755 /path/to/your/site/counter
+   chmod 755 /path/to/your/site/counter/queue
+   chmod 755 /path/to/your/site/counter/cache
    ```
-4. Загрузите файлы геолокации:
-   - GeoLite2-City.mmdb (можно скачать с сайта MaxMind)
-   - SxGeoCity.dat (можно скачать с сайта sypexgeo.net)
+4. Download geolocation files:
+   - GeoLite2-City.mmdb (can be downloaded from the MaxMind website)
+   - SxGeoCity.dat (can be downloaded from the sypexgeo.net website)
 
-### 3. Настройка конфигурации
+### 3. Configuration Setup
 
-Создайте файл `counter_config.php` в директории `/counter/` со следующим содержимым:
+Create a `counter_config.php` file in the `/counter/` directory with the following content:
 
 ```php
 <?php
 $config = [
-    // Настройки базы данных
+    // Database settings
     'db_host' => 'localhost',
     'db_name' => 'site_counter',
     'db_user' => 'site_counter',
     'db_pass' => 'site_counter',
     
-    // Настройки счетчика
-    'count_unique_ip' => true, // Подсчитывать только уникальные IP
-    'count_interval' => 3600, // Интервал в секундах для уникальных посещений (1 час)
-    'excluded_ips' => ['127.0.0.1'], // IP-адреса, которые не нужно учитывать
+    // Counter settings
+    'count_unique_ip' => true, // Count only unique IPs
+    'count_interval' => 3600, // Interval in seconds for unique visits (1 hour)
+    'excluded_ips' => ['127.0.0.1'], // IP addresses to exclude
     
-    // Настройки геолокации
-    'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb', // Путь к файлу MaxMind GeoIP2
-    'sxgeo_path' => __DIR__ . '/SxGeoCity.dat', // Путь к файлу SxGeo
-    'use_external_api' => true, // Использовать внешний API если локальные базы не дали результат
+    // Geolocation settings
+    'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb', // Path to MaxMind GeoIP2 file
+    'sxgeo_path' => __DIR__ . '/SxGeoCity.dat', // Path to SxGeo file
+    'use_external_api' => true, // Use external API if local databases don't provide results
     'api_url' => 'https://ipinfo.io/{ip}/json',
-    'api_token' => '', // Ваш токен для API
+    'api_token' => '', // Your API token
     
-    // Настройки защиты
-    'max_queue_size' => 1000, // Максимальное количество файлов в очереди
-    'queue_batch_size' => 50, // Количество записей для обработки за раз
-    'auto_process_chance' => 5, // Вероятность автоматической обработки очереди (%)
+    // Protection settings
+    'max_queue_size' => 1000, // Maximum number of files in the queue
+    'queue_batch_size' => 50, // Number of records to process at once
+    'auto_process_chance' => 5, // Probability of automatic queue processing (%)
     
-    // Настройки кэша в БД
-    'cache_ttl' => 604800, // Время жизни кэша в секундах (7 дней)
-    'cleanup_chance' => 2,  // Вероятность очистки старых записей кэша (%)
+    // Database cache settings
+    'cache_ttl' => 604800, // Cache lifetime in seconds (7 days)
+    'cleanup_chance' => 2,  // Probability of cleaning old cache records (%)
     
-    // Настройки отображения
+    // Display settings
     'counter_style' => 'digital', // simple, digital, modern, classic
-    'items_per_page' => 25 // Количество элементов на странице в админке
+    'items_per_page' => 25 // Number of items per page in admin panel
 ];
 ?>
 ```
 
-### 4. Создание структуры базы данных
+### 4. Creating the Database Structure
 
-Запустите SQL-скрипт для создания таблиц:
+Run the SQL script to create tables:
 
 ```sql
--- Таблица посещений
+-- Visits table
 CREATE TABLE `visits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `page_url` varchar(255) NOT NULL,
@@ -111,8 +112,8 @@ CREATE TABLE `visits` (
   `user_agent` text,
   `visit_time` datetime NOT NULL,
   `referer` varchar(255) DEFAULT NULL,
-  `country` varchar(100) DEFAULT 'Неизвестно',
-  `city` varchar(100) DEFAULT 'Неизвестно',
+  `country` varchar(100) DEFAULT 'Unknown',
+  `city` varchar(100) DEFAULT 'Unknown',
   `latitude` float DEFAULT '0',
   `longitude` float DEFAULT '0',
   `region` varchar(100) DEFAULT '',
@@ -124,11 +125,11 @@ CREATE TABLE `visits` (
   KEY `idx_visit_time` (`visit_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Таблица кэша геоданных
+-- Geodata cache table
 CREATE TABLE `geo_cache` (
   `ip_address` varchar(45) PRIMARY KEY,
-  `country` varchar(100) NOT NULL DEFAULT 'Неизвестно',
-  `city` varchar(100) NOT NULL DEFAULT 'Неизвестно',
+  `country` varchar(100) NOT NULL DEFAULT 'Unknown',
+  `city` varchar(100) NOT NULL DEFAULT 'Unknown',
   `latitude` float DEFAULT 0,
   `longitude` float DEFAULT 0,
   `region` varchar(100) DEFAULT '',
@@ -137,7 +138,7 @@ CREATE TABLE `geo_cache` (
 );
 CREATE INDEX idx_geo_cache_updated ON geo_cache(updated_at);
 
--- Таблица пользователей для админки
+-- Users table for admin panel
 CREATE TABLE `users` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `username` varchar(50) NOT NULL,
@@ -149,36 +150,36 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-### 5. Создание пользователя админки
+### 5. Creating an Admin User
 
-Для создания пользователя административной панели вы можете использовать встроенный менеджер пользователей:
+To create an administrative panel user, you can use the built-in user manager:
 
-1. Откройте в браузере:
+1. Open in your browser:
 ```
-http://ваш-сайт.com/counter/user_manager.php
+http://your-site.com/counter/user_manager.php
 ```
 
-2. Заполните форму добавления нового пользователя:
-   - Имя пользователя (например, `admin`)
-   - Пароль
-   - Email (опционально)
+2. Fill out the form to add a new user:
+   - Username (e.g., `admin`)
+   - Password
+   - Email (optional)
 
-3. Нажмите кнопку "Добавить пользователя"
+3. Click the "Add User" button
 
-После создания пользователя вы сможете войти в административную панель.
+After creating a user, you'll be able to log in to the administrative panel.
 
-Альтернативно, вы можете добавить пользователя напрямую через SQL:
+Alternatively, you can add a user directly via SQL:
 
 ```sql
 INSERT INTO `users` (`username`, `password`, `email`) 
 VALUES ('admin', '$2y$10$oCb0SzKqac8bM9WvFubkz.6jsLdj9eUWBXLZFLNCo1PN.UOkFyvHG', 'admin@example.com');
 ```
 
-Это создаст пользователя с логином `admin` и паролем `admin`. **Обязательно смените пароль после первого входа!**
+This will create a user with login `admin` and password `admin`. **Be sure to change the password after your first login!**
 
-### 6. Подключение счетчика к сайту
+### 6. Connecting the Counter to Your Site
 
-Добавьте следующий код в файл, который должен быть включен на всех страницах вашего сайта (например, в header.php или footer.php):
+Add the following code to a file that should be included on all pages of your site (for example, in header.php or footer.php):
 
 ```php
 <?php
@@ -186,123 +187,123 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/counter/counter_secure_db_cache.php';
 ?>
 ```
 
-## 📖 Использование
+## 📖 Usage
 
-### Подсчет посещений
+### Counting Visits
 
-После установки счетчик автоматически начнет собирать статистику посещений. Никаких дополнительных действий не требуется.
+After installation, the counter will automatically begin collecting visitor statistics. No additional actions are required.
 
-### Доступ к административной панели
+### Accessing the Administrative Panel
 
-Административная панель доступна по адресу:
+The administrative panel is available at:
 ```
-http://ваш-сайт.com/counter/index.php
-```
-
-Используйте логин и пароль, созданные ранее, для входа.
-
-### Управление пользователями
-
-Для управления пользователями административной панели используйте интерфейс менеджера пользователей:
-
-```
-http://ваш-сайт.com/counter/user_manager.php
+http://your-site.com/counter/admin/
 ```
 
-С помощью этого инструмента вы можете:
-- Добавлять новых пользователей
-- Изменять данные существующих пользователей
-- Менять пароли пользователей
-- Удалять ненужных пользователей
+Use the login and password created earlier to log in.
 
-Обратите внимание, что система не позволит удалить последнего оставшегося пользователя, чтобы избежать потери доступа к административной панели.
+### User Management
 
-### Отображение счетчика на сайте
+To manage administrative panel users, use the user manager interface:
 
-Для отображения счетчика на вашем сайте добавьте:
+```
+http://your-site.com/counter/user_manager.php
+```
+
+With this tool you can:
+- Add new users
+- Modify existing user data
+- Change user passwords
+- Delete unwanted users
+
+Note that the system will not allow you to delete the last remaining user to prevent loss of access to the administrative panel.
+
+### Displaying the Counter on Your Site
+
+To display the counter on your site, add:
 
 ```html
-<img src="/counter/counter.php" alt="Счетчик посещений">
+<img src="/counter/counter.php" alt="Visitor Counter">
 ```
 
-Вы можете изменить стиль счетчика:
+You can change the counter style:
 
 ```html
-<img src="/counter/counter.php?style=digital" alt="Цифровой счетчик">
+<img src="/counter/counter.php?style=digital" alt="Digital Counter">
 ```
 
-Доступные стили: `simple`, `digital`, `modern`, `classic`.
+Available styles: `simple`, `digital`, `modern`, `classic`.
 
-## 🔧 Устранение неполадок
+## 🔧 Troubleshooting
 
-### Счетчик не отображается
+### Counter Not Displaying
 
-- Проверьте права доступа к директории `/counter/` (должны быть 755)
-- Убедитесь, что файлы геолокации существуют и доступны для чтения
-- Проверьте логи ошибок PHP и веб-сервера
+- Check access permissions to the `/counter/` directory (should be 755)
+- Make sure geolocation files exist and are readable
+- Check PHP and web server error logs
 
-### Проблемы с геолокацией
+### Geolocation Problems
 
-- Убедитесь, что пути к файлам GeoLite2-City.mmdb и SxGeoCity.dat указаны правильно
-- Проверьте, что файлы не повреждены и имеют актуальную версию
-- При использовании внешнего API убедитесь, что токен указан правильно
+- Make sure the paths to GeoLite2-City.mmdb and SxGeoCity.dat files are correctly specified
+- Check that the files are not corrupted and have the current version
+- When using an external API, make sure the token is correctly specified
 
-### Ошибки в административной панели
+### Errors in the Administrative Panel
 
-- Проверьте, правильно ли создана структура базы данных
-- Убедитесь, что у пользователя базы данных есть необходимые права доступа
-- Проверьте, установлены ли все необходимые модули PHP (PDO, JSON, cURL)
+- Check that the database structure is correctly created
+- Make sure the database user has the necessary access rights
+- Check that all necessary PHP modules are installed (PDO, JSON, cURL)
 
-## 🛠️ Регулярное обслуживание
+## 🛠️ Regular Maintenance
 
-### Обработка очереди
+### Queue Processing
 
-Если включен режим очереди, необходимо периодически обрабатывать накопленные данные:
-
-```
-http://ваш-сайт.com/counter/counter_secure_db_cache.php?process_queue=1
-```
-
-### Очистка устаревших данных
-
-Для очистки устаревших данных и освобождения места в базе данных:
+If queue mode is enabled, you need to periodically process accumulated data:
 
 ```
-http://ваш-сайт.com/counter/counter_secure_db_cache.php?cleanup=1
+http://your-site.com/counter/counter_secure_db_cache.php?process_queue=1
 ```
 
-Рекомендуется настроить эти операции через CRON для автоматического выполнения.
+### Cleaning Up Old Data
 
-## 🌐 Обновление баз геолокации
+To clean up old data and free up space in the database:
 
-Базы геолокации требуют регулярного обновления:
+```
+http://your-site.com/counter/counter_secure_db_cache.php?cleanup=1
+```
 
-- **MaxMind GeoLite2**: Обновляйте не реже раза в месяц с [официального сайта](https://dev.maxmind.com/geoip/geoip2/geolite2/)
-- **SxGeo**: Обновляйте примерно раз в квартал с [сайта разработчика](https://sypexgeo.net/)
+It is recommended to set up these operations through CRON for automatic execution.
 
-## 🔒 Безопасность
+## 🌐 Updating Geolocation Databases
 
-- Регулярно обновляйте пароли администраторов
-- Ограничьте доступ к директории `/counter/admin/` через .htaccess или конфигурацию веб-сервера
-- Настройте резервное копирование базы данных счетчика
+Geolocation databases require regular updates:
 
-## ❤️ Поддержать проект
+- **MaxMind GeoLite2**: Update at least once a month from the [official website](https://dev.maxmind.com/geoip/geoip2/geolite2/)
+- **SxGeo**: Update approximately once per quarter from the [developer's website](https://sypexgeo.net/)
 
-Если вам понравился этот проект и вы хотите поддержать его развитие, вы можете сделать пожертвование через PayPal:
+## 🔒 Security
+
+- Regularly update administrator passwords
+- Restrict access to the `/counter/admin/` directory via .htaccess or web server configuration
+- Set up backup for the counter database
+
+## ❤️ Support the Project
+
+If you like this project and want to support its development, you can make a donation via PayPal:
 
 * PayPal: murkir@gmail.com
 
-## 📄 Лицензия
+## 📄 License
 
-Этот проект распространяется под лицензией MIT. Вы можете свободно использовать, изменять и распространять его при условии сохранения информации об авторских правах.
+This project is distributed under the MIT license. You are free to use, modify, and distribute it provided you retain the copyright information.
 
-## 📞 Контакты
+## 📞 Contacts
 
-Если у вас возникли вопросы или предложения по улучшению счетчика, пожалуйста, свяжитесь с нами:
+If you have questions or suggestions for improving the counter, please contact us:
 
 - Email: murkir@gmail.com
 - GitHub: [https://github.com/Murkirpus/TurboCounter](https://github.com/Murkirpus/TurboCounter)
 
 ---
 
-**Примечание**: Базы данных геолокации MaxMind и SxGeo являются сторонними продуктами и распространяются под собственными лицензиями. Пожалуйста, ознакомьтесь с их условиями использования.
+**Note**: The MaxMind and SxGeo geolocation databases are third-party products and are distributed under their own licenses. Please review their terms of use.
