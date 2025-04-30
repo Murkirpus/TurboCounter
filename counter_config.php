@@ -16,7 +16,7 @@ $config = [
     'sxgeo_path' => __DIR__ . '/SxGeoCity.dat', // Путь к файлу SxGeo
     'use_external_api' => true, // Использовать внешний API если локальные базы не дали результат
     'api_url' => 'https://ipinfo.io/{ip}/json',
-    'api_token' => '757611f45a9c65', // Ваш токен для API
+    'api_token' => '757611f45a9c61', // Ваш токен для API
     
     // Настройки защиты
     'max_queue_size' => 1000, // Максимальное количество файлов в очереди
