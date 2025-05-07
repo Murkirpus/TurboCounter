@@ -1,5 +1,8 @@
 <?php
 session_start();
+// Увеличиваем время жизни сессии до 30 дней (в секундах)
+ini_set('session.gc_maxlifetime', 2592000); // 30 дней
+session_set_cookie_params(2592000); // Также устанавливаем время жизни cookie сессии
 
 // Конфигурация базы данных
 $config = [
