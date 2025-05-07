@@ -68,6 +68,86 @@ function checkAuth() {
     }
 }
 
+// Функция для очистки базы данных
+function cleanupDatabase($pdo) {
+    try {
+        // Начинаем транзакцию для безопасного удаления
+        $pdo->beginTransaction();
+        
+        // Очищаем таблицу посещений
+        $stmt = $pdo->exec("TRUNCATE TABLE visits");
+        
+        // Фиксируем транзакцию
+        $pdo->commit();
+        
+        return true;
+    } catch (PDOException $e) {
+        // В случае ошибки откатываем изменения
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log("Ошибка при очистке базы данных: " . $e->getMessage());
+        return false;
+    }
+}
+
+
+// Подключаемся к базе данных
+$pdo = connectDB($config);
+
+// Обработка действия очистки базы данных
+if (isset($_POST['cleanup_db']) && $_POST['cleanup_db'] === '1') {
+    if (isset($_POST['confirm_cleanup']) && $_POST['confirm_cleanup'] === 'confirm') {
+        $cleanupResult = cleanupDatabase($pdo);
+        if ($cleanupResult) {
+            $_SESSION['message'] = [
+                'type' => 'success',
+                'text' => 'База данных успешно очищена!'
+            ];
+        } else {
+            $_SESSION['message'] = [
+                'type' => 'danger',
+                'text' => 'Ошибка при очистке базы данных!'
+            ];
+        }
+    } else {
+        $_SESSION['message'] = [
+            'type' => 'warning',
+            'text' => 'Операция отменена! Для очистки базы необходимо подтверждение.'
+        ];
+    }
+    // Перенаправляем, чтобы избежать повторной отправки формы
+    header("Location: index.php");
+    exit;
+}
+
+// Отображение сообщений
+$message = null;
+if (isset($_SESSION['message'])) {
+    $message = $_SESSION['message'];
+    unset($_SESSION['message']);
+}
+
+
+
+
+// Функция для получения размера базы данных
+function getDatabaseSize($pdo, $dbName) {
+    $stmt = $pdo->prepare("
+        SELECT 
+            table_schema AS 'database',
+            ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'size_mb'
+        FROM information_schema.tables
+        WHERE table_schema = :dbName
+        GROUP BY table_schema
+    ");
+    $stmt->bindParam(':dbName', $dbName, PDO::PARAM_STR);
+    $stmt->execute();
+    
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $result ? $result['size_mb'] : 0;
+}
+
 // Функция экспорта данных
 function exportData($pdo, $format = 'csv') {
     // Увеличиваем лимиты выполнения скрипта
@@ -272,6 +352,8 @@ function checkNotifications($pdo) {
 
 // Подключаемся к базе данных
 $pdo = connectDB($config);
+
+$dbSize = getDatabaseSize($pdo, $config['db_name']);
 
 // Обработка запроса на выход
 if (isset($_GET['logout'])) {
@@ -943,72 +1025,90 @@ $notifications = checkNotifications($pdo);
             <div class="col-md-10 content">
                 <?php if ($currentPage == 'dashboard'): ?>
                 <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h2>Панель управления</h2>
-                    <div>
-                        <div class="dropdown">
-                            <button class="btn btn-primary dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="bi bi-download"></i> Экспорт данных
-                            </button>
-                            <ul class="dropdown-menu" aria-labelledby="exportDropdown">
-                                <li><a class="dropdown-item" href="index.php?export=csv">Экспорт в CSV</a></li>
-                                <li><a class="dropdown-item" href="index.php?export=excel">Экспорт в Excel</a></li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Отображение уведомлений -->
-                <?php if (!empty($notifications)): ?>
-                    <div class="notifications mb-4">
-                        <?php foreach ($notifications as $notification): ?>
-                            <div class="alert alert-<?php echo $notification['type']; ?> alert-dismissible fade show" role="alert">
-                                <?php echo $notification['message']; ?>
-                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <!-- Основная статистика -->
-                <div class="row">
-                    <div class="col-md-3">
-                        <div class="card stats-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Всего посещений</h5>
-                                <h3 class="text-primary"><?php echo $basicStats['total_visits']; ?></h3>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-    <div class="card stats-card">
-        <div class="card-body">
-            <h5 class="card-title">Уникальных посетителей</h5>
-            <h3 class="text-success">
-                <?php echo $basicStats['unique_visitors']; ?> 
-                <small class="text-muted fs-6">
-                    (сегодня: <span class="text-info"><?php echo $basicStats['today_unique']; ?></span>)
-                </small>
-            </h3>
+    <h2>Панель управления</h2>
+    <div>
+        <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#cleanupModal">
+            <i class="bi bi-trash"></i> Очистить базу данных
+        </button>
+        <div class="dropdown">
+            <button class="btn btn-primary dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download"></i> Экспорт данных
+            </button>
+            <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                <li><a class="dropdown-item" href="index.php?export=csv">Экспорт в CSV</a></li>
+                <li><a class="dropdown-item" href="index.php?export=excel">Экспорт в Excel</a></li>
+            </ul>
         </div>
     </div>
 </div>
-                    <div class="col-md-3">
-                        <div class="card stats-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Сегодня</h5>
-                                <h3 class="text-info"><?php echo $basicStats['today_visits']; ?></h3>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card stats-card">
-                            <div class="card-body">
-                                <h5 class="card-title">За месяц</h5>
-                                <h3 class="text-warning"><?php echo $basicStats['month_visits']; ?></h3>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                
+                <!-- Отображение уведомлений -->
+<?php if ($message): ?>
+    <div class="alert alert-<?php echo $message['type']; ?> alert-dismissible fade show" role="alert">
+        <?php echo $message['text']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+<?php endif; ?>
+
+<?php if (!empty($notifications)): ?>
+    <div class="notifications mb-4">
+        <?php foreach ($notifications as $notification): ?>
+            <div class="alert alert-<?php echo $notification['type']; ?> alert-dismissible fade show" role="alert">
+                <?php echo $notification['message']; ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>
+                
+                <!-- Основная статистика -->
+                <div class="row">
+    <div class="col-md-2">
+        <div class="card stats-card">
+            <div class="card-body">
+                <h5 class="card-title">Размер БД</h5>
+                <h3 class="text-danger"><?php echo $dbSize; ?> МБ</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card stats-card">
+            <div class="card-body">
+                <h5 class="card-title">Всего</h5>
+                <h3 class="text-primary"><?php echo $basicStats['total_visits']; ?></h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stats-card">
+            <div class="card-body">
+                <h5 class="card-title">Уникальных</h5>
+                <h3 class="text-success">
+                    <?php echo $basicStats['unique_visitors']; ?> 
+                    <small class="text-muted fs-6">
+                        (сегодня: <span class="text-info"><?php echo $basicStats['today_unique']; ?></span>)
+                    </small>
+                </h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card stats-card">
+            <div class="card-body">
+                <h5 class="card-title">Сегодня</h5>
+                <h3 class="text-info"><?php echo $basicStats['today_visits']; ?></h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stats-card">
+            <div class="card-body">
+                <h5 class="card-title">За месяц</h5>
+                <h3 class="text-warning"><?php echo $basicStats['month_visits']; ?></h3>
+            </div>
+        </div>
+    </div>
+</div>
                 
                 <!-- Фильтр по дате -->
                 <div class="row mt-4">
@@ -1986,5 +2086,32 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     </script>
     <?php endif; ?>
+	<!-- Модальное окно для подтверждения очистки базы данных -->
+<div class="modal fade" id="cleanupModal" tabindex="-1" aria-labelledby="cleanupModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="cleanupModalLabel">Подтверждение очистки базы данных</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-danger fw-bold">ВНИМАНИЕ! Эта операция удалит ВСЕ данные о посещениях!</p>
+                <p>Это действие необратимо. Рекомендуется сделать экспорт данных перед очисткой.</p>
+                <p>Для подтверждения очистки базы данных введите слово "confirm" в поле ниже:</p>
+                <form id="cleanupForm" method="post" action="">
+                    <input type="hidden" name="cleanup_db" value="1">
+                    <div class="mb-3">
+                        <input type="text" class="form-control" name="confirm_cleanup" id="confirmCleanup" 
+                               placeholder="Введите 'confirm'" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" form="cleanupForm" class="btn btn-danger">Очистить базу данных</button>
+            </div>
+        </div>
+    </div>
+</div>
 </body>
 </html>
