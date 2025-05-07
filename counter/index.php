@@ -296,6 +296,7 @@ function saveCounterConfig($config) {
 }
 
 // Получение основной статистики
+// Получение основной статистики
 function getBasicStats($pdo) {
     $stats = [];
     
@@ -303,9 +304,13 @@ function getBasicStats($pdo) {
     $stmt = $pdo->query("SELECT COUNT(*) FROM visits");
     $stats['total_visits'] = $stmt->fetchColumn();
     
-    // Количество уникальных посетителей
+    // Количество уникальных посетителей (всего)
     $stmt = $pdo->query("SELECT COUNT(DISTINCT ip_address) FROM visits");
     $stats['unique_visitors'] = $stmt->fetchColumn();
+    
+    // Количество уникальных посетителей за сегодня
+    $stmt = $pdo->query("SELECT COUNT(DISTINCT ip_address) FROM visits WHERE DATE(visit_time) = CURDATE()");
+    $stats['today_unique'] = $stmt->fetchColumn();
     
     // Посещения за сегодня
     $stmt = $pdo->query("SELECT COUNT(*) FROM visits WHERE DATE(visit_time) = CURDATE()");
@@ -975,13 +980,18 @@ $notifications = checkNotifications($pdo);
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card stats-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Уникальных посетителей</h5>
-                                <h3 class="text-success"><?php echo $basicStats['unique_visitors']; ?></h3>
-                            </div>
-                        </div>
-                    </div>
+    <div class="card stats-card">
+        <div class="card-body">
+            <h5 class="card-title">Уникальных посетителей</h5>
+            <h3 class="text-success">
+                <?php echo $basicStats['unique_visitors']; ?> 
+                <small class="text-muted fs-6">
+                    (сегодня: <span class="text-info"><?php echo $basicStats['today_unique']; ?></span>)
+                </small>
+            </h3>
+        </div>
+    </div>
+</div>
                     <div class="col-md-3">
                         <div class="card stats-card">
                             <div class="card-body">
