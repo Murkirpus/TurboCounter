@@ -32,7 +32,7 @@ CREATE TABLE `users` (
 ) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE `visits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `page_url` varchar(255) NOT NULL,
+  `page_url` varchar(2048) NOT NULL,
   `ip_address` varchar(45) NOT NULL,
   `user_agent` text DEFAULT NULL,
   `visit_time` datetime NOT NULL,
