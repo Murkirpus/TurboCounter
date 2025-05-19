@@ -107,7 +107,7 @@ Run the SQL script to create tables:
 -- Visits table
 CREATE TABLE `visits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `page_url` varchar(255) NOT NULL,
+  `page_url` varchar(2048) NOT NULL,
   `ip_address` varchar(45) NOT NULL,
   `user_agent` text,
   `visit_time` datetime NOT NULL,
