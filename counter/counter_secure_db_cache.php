@@ -160,10 +160,13 @@ try {
         $visit['timezone'] = $geoData['timezone'] ?? '';
     }
     
-    // Записываем в очередь
-    if (is_dir($queueDir) && is_writable($queueDir)) {
-        $filename = $queueDir . '/' . time() . '_' . mt_rand(1000, 9999) . '.visit';
-        file_put_contents($filename, json_encode($visit));
+	// Обрезаем данные перед записью в очередь
+	$visit = truncateVisitData($visit);
+	
+	// Записываем в очередь
+	if (is_dir($queueDir) && is_writable($queueDir)) {
+    $filename = $queueDir . '/' . time() . '_' . mt_rand(1000, 9999) . '.visit';
+    file_put_contents($filename, json_encode($visit));
         
         // Проверяем, не слишком ли большая очередь
         $files = glob($queueDir . '/*.visit');
@@ -227,7 +230,65 @@ function ensureGeoCacheTable($pdo) {
 }
 
 /**
- * Обработка очереди посещений
+ * Функция для обрезания данных согласно ограничениям базы данных
+ * 
+ * @param array $visit Массив данных посещения
+ * @return array Обрезанные данные
+ */
+function truncateVisitData($visit) {
+    // Определяем максимальные длины полей согласно структуре БД
+    $limits = [
+        'page_url' => 500,
+        'ip_address' => 45,
+        'user_agent' => 65535, // TEXT поле
+        'referer' => 500,
+        'country' => 100,
+        'city' => 100,
+        'browser' => 50,
+        'device' => 50,
+        'region' => 100,
+        'timezone' => 50
+    ];
+    
+    // Обрезаем каждое поле до максимальной длины
+    foreach ($limits as $field => $maxLength) {
+        if (isset($visit[$field]) && is_string($visit[$field])) {
+            if (strlen($visit[$field]) > $maxLength) {
+                $visit[$field] = mb_substr($visit[$field], 0, $maxLength, 'UTF-8');
+                
+                // Логируем обрезание для отладки
+                error_log("Обрезано поле {$field}: было " . strlen($visit[$field]) . " символов, стало {$maxLength}");
+            }
+        }
+    }
+    
+    // Проверяем и корректируем числовые поля
+    $numericFields = ['latitude', 'longitude'];
+    foreach ($numericFields as $field) {
+        if (isset($visit[$field])) {
+            // Ограничиваем координаты разумными пределами
+            if ($field === 'latitude') {
+                $visit[$field] = max(-90, min(90, (float)$visit[$field]));
+            } elseif ($field === 'longitude') {
+                $visit[$field] = max(-180, min(180, (float)$visit[$field]));
+            }
+        }
+    }
+    
+    // Убираем потенциально опасные символы
+    $safeFields = ['page_url', 'referer', 'user_agent'];
+    foreach ($safeFields as $field) {
+        if (isset($visit[$field])) {
+            // Удаляем нулевые байты и управляющие символы
+            $visit[$field] = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $visit[$field]);
+        }
+    }
+    
+    return $visit;
+}
+
+/**
+ * Обработка очереди посещений с обрезанием длинных данных
  */
 function processQueue($config, $queueDir) {
     $lockFile = $queueDir . '/processing.lock';
@@ -253,12 +314,11 @@ function processQueue($config, $queueDir) {
         // Получаем файлы для обработки
         $files = glob($queueDir . '/*.visit');
         if (empty($files)) {
-            // Нет файлов для обработки
             @unlink($lockFile);
             return;
         }
         
-        // Сортируем файлы по времени создания (сначала старые)
+        // Сортируем файлы по времени создания
         usort($files, function($a, $b) {
             return filemtime($a) - filemtime($b);
         });
@@ -292,11 +352,37 @@ function processQueue($config, $queueDir) {
         // Начинаем транзакцию
         $pdo->beginTransaction();
         $processed = 0;
+        $truncated = 0;
         
         foreach ($filesToProcess as $file) {
             try {
                 $data = json_decode(file_get_contents($file), true);
-                if (!$data) continue;
+                if (!$data) {
+                    // Переименовываем файл с некорректным JSON
+                    @rename($file, $file . '.invalid_json');
+                    continue;
+                }
+                
+                // НОВОЕ: Обрезаем данные перед вставкой
+                $originalDataSize = strlen(json_encode($data));
+                $data = truncateVisitData($data);
+                $newDataSize = strlen(json_encode($data));
+                
+                // Проверяем, были ли данные обрезаны
+                if ($newDataSize < $originalDataSize) {
+                    $truncated++;
+                }
+                
+                // Устанавливаем значения по умолчанию для обязательных полей
+                $data['page_url'] = $data['page_url'] ?? '';
+                $data['ip_address'] = $data['ip_address'] ?? '';
+                $data['user_agent'] = $data['user_agent'] ?? '';
+                $data['visit_time'] = $data['visit_time'] ?? date('Y-m-d H:i:s');
+                $data['referer'] = $data['referer'] ?? '';
+                $data['country'] = $data['country'] ?? 'Неизвестно';
+                $data['city'] = $data['city'] ?? 'Неизвестно';
+                $data['browser'] = $data['browser'] ?? 'Other';
+                $data['device'] = $data['device'] ?? 'Desktop';
                 
                 // Выполняем вставку
                 if ($hasExtendedFields) {
@@ -332,21 +418,74 @@ function processQueue($config, $queueDir) {
                 // Удаляем обработанный файл
                 @unlink($file);
                 $processed++;
+                
             } catch (Exception $e) {
                 error_log("Ошибка обработки файла {$file}: " . $e->getMessage());
-                // Пропускаем проблемный файл
-                @rename($file, $file . '.error');
+                
+                // Попытка сохранить с минимальными данными
+                try {
+                    $minimalData = [
+                        'page_url' => mb_substr($data['page_url'] ?? '', 0, 500),
+                        'ip_address' => mb_substr($data['ip_address'] ?? '', 0, 45),
+                        'user_agent' => 'Error: Data too long',
+                        'visit_time' => $data['visit_time'] ?? date('Y-m-d H:i:s'),
+                        'referer' => '',
+                        'country' => 'Неизвестно',
+                        'city' => 'Неизвестно',
+                        'browser' => 'Other',
+                        'device' => 'Desktop'
+                    ];
+                    
+                    if ($hasExtendedFields) {
+                        $stmt->execute([
+                            $minimalData['page_url'],
+                            $minimalData['ip_address'],
+                            $minimalData['user_agent'],
+                            $minimalData['visit_time'],
+                            $minimalData['referer'],
+                            $minimalData['country'],
+                            $minimalData['city'],
+                            0, 0, '', '', // latitude, longitude, region, timezone
+                            $minimalData['browser'],
+                            $minimalData['device']
+                        ]);
+                    } else {
+                        $stmt->execute([
+                            $minimalData['page_url'],
+                            $minimalData['ip_address'],
+                            $minimalData['user_agent'],
+                            $minimalData['visit_time'],
+                            $minimalData['referer'],
+                            $minimalData['country'],
+                            $minimalData['city'],
+                            $minimalData['browser'],
+                            $minimalData['device']
+                        ]);
+                    }
+                    
+                    @unlink($file);
+                    $processed++;
+                    error_log("Файл {$file} сохранен с минимальными данными");
+                    
+                } catch (Exception $e2) {
+                    // Если даже минимальные данные не сохранились, переименовываем файл
+                    @rename($file, $file . '.failed');
+                    error_log("Не удалось сохранить даже минимальные данные из {$file}: " . $e2->getMessage());
+                }
             }
         }
         
         // Фиксируем транзакцию
         $pdo->commit();
         
+        // Логируем результаты
+        if ($truncated > 0) {
+            error_log("Обработано {$processed} файлов, в {$truncated} файлах данные были обрезаны");
+        }
+        
     } catch (Exception $e) {
-        // Логируем ошибку
         error_log("Ошибка при обработке очереди: " . $e->getMessage());
         
-        // Откатываем транзакцию, если она активна
         if (isset($pdo) && $pdo->inTransaction()) {
             $pdo->rollBack();
         }
@@ -794,9 +933,13 @@ if (basename($_SERVER['SCRIPT_FILENAME']) === basename(__FILE__)) {
         }
         
         // Очистка старых файлов с ошибками
-        $queueDir = __DIR__ . '/queue';
-        if (is_dir($queueDir)) {
-            $errorFiles = glob($queueDir . '/*.error');
+		$queueDir = __DIR__ . '/queue';
+		if (is_dir($queueDir)) {
+			$errorFiles = array_merge(
+        glob($queueDir . '/*.error'),
+        glob($queueDir . '/*.failed'),
+        glob($queueDir . '/*.invalid_json')
+    );
             $lastWeek = time() - 604800; // 7 дней
             $cleaned = 0;
             
