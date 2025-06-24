@@ -1,30 +1,55 @@
 <?php
-$config = [
-    // Настройки базы данных
+// Конфигурация для нескольких сайтов
+$sites_config = array (
+  'main' => 
+  array (
+    'name' => 'Основной сайт',
     'db_host' => 'localhost',
     'db_name' => 'site_counter',
     'db_user' => 'site_counter',
     'db_pass' => 'site_counter',
-    
-    // Настройки счетчика
-    'count_unique_ip' => true, // Подсчитывать только уникальные IP
-    'count_interval' => 3600, // Интервал в секундах для уникальных посещений (1 час)
-    'excluded_ips' => ['127.0.0.1'], // IP-адреса, которые не нужно учитывать
-    
-    // Настройки геолокации
-    'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb', // Путь к файлу MaxMind GeoIP2
-    'sxgeo_path' => __DIR__ . '/SxGeoCity.dat', // Путь к файлу SxGeo
-    'use_external_api' => true, // Использовать внешний API если локальные базы не дали результат
-    'api_url' => 'https://ipinfo.io/{ip}/json',
-    'api_token' => '757611f45a9c65', // Ваш токен для API
-    
-    // Настройки защиты
-    'max_queue_size' => 1000, // Максимальное количество файлов в очереди
-    'queue_batch_size' => 50, // Количество записей для обработки за раз
-    'auto_process_chance' => 5, // Вероятность автоматической обработки очереди (%)
-    
-    // Настройки кэша в БД
-    'cache_ttl' => 604800, // Время жизни кэша в секундах (1 день)
-    'cleanup_chance' => 2  // Вероятность очистки старых записей кэша (%)
-];
+    'url' => 'https://kinoprostor.xyz',
+    'color' => '#007bff',
+  ),
+  'blog' => 
+  array (
+    'name' => 'Блог',
+    'db_host' => 'dj-x.info',
+    'db_name' => 'site_counter',
+    'db_user' => 'site_counter',
+    'db_pass' => 'site_counter',
+    'url' => 'https://dj-x.info',
+    'color' => '#28a745',
+  ),
+);
+
+// Общие настройки (применяются ко всем сайтам)
+$config = array (
+  'db_host' => 'localhost',
+  'db_name' => 'site_counter',
+  'db_user' => 'site_counter',
+  'db_pass' => 'site_counter',
+  'count_unique_ip' => true,
+  'count_interval' => 86400,
+  'excluded_ips' => 
+  array (
+    0 => '127.0.0.1',
+  ),
+  'mmdb_path' => 'GeoLite2-City.mmdb',
+  'sxgeo_path' => 'SxGeoCity.dat',
+  'use_external_api' => true,
+  'api_url' => 'https://ipinfo.io/{ip}/json',
+  'api_token' => '7575a9c65',
+  'max_queue_size' => 1000,
+  'queue_batch_size' => 50,
+  'auto_process_chance' => 5,
+  'cache_ttl' => 604800,
+  'cleanup_chance' => 2,
+  'counter_style' => 'simple',
+  'items_per_page' => 25,
+  'default_site' => 'main',
+);
+
+// Добавляем сайты обратно
+$config['sites'] = $sites_config;
 ?>
