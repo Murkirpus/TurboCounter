@@ -1,4 +1,4 @@
-# TurboCounter
+# TurboCounter + many sites
 
 Modern visitor counter with geolocation and DDoS protection
 A powerful tool for tracking and analyzing website visits with low server load
