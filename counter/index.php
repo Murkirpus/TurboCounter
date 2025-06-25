@@ -275,7 +275,24 @@ function getDatabaseSize($pdo, $dbName) {
 // Функция для сохранения настроек
 function saveCounterConfig($config) {
     $configFile = __DIR__ . '/counter_config.php';
-    $content = "<?php\n\$config = " . var_export($config, true) . ";\n?>";
+    
+    // Извлекаем сайты из общего конфига
+    $sites_config = $config['sites'] ?? [];
+    
+    // Создаем копию конфига без сайтов для общих настроек
+    $general_config = $config;
+    unset($general_config['sites']);
+    
+    // Формируем содержимое файла в том же формате, что ожидает counter_secure_db_cache.php
+    $content = "<?php\n";
+    $content .= "// Конфигурация для нескольких сайтов\n";
+    $content .= '$sites_config = ' . var_export($sites_config, true) . ";\n\n";
+    $content .= "// Общие настройки (применяются ко всем сайтам)\n";
+    $content .= '$config = ' . var_export($general_config, true) . ";\n\n";
+    $content .= "// Добавляем сайты обратно\n";
+    $content .= '$config[\'sites\'] = $sites_config;' . "\n";
+    $content .= "?>";
+    
     file_put_contents($configFile, $content);
 }
 
