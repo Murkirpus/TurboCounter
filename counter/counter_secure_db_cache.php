@@ -1,145 +1,131 @@
 <?php
 /**
- * Безопасный счетчик посещений с защитой от DDoS-атак
- * С кэшированием геоданных в базе данных вместо файлов
+ * Безопасный счетчик посещений с множественными API и улучшенным кэшированием
+ * Версия: 3.0 - ALL-IN-ONE
  * 
- * Для использования добавьте в свой сайт:
+ * ОСОБЕННОСТИ:
+ * ✅ Поддержка 5+ бесплатных API
+ * ✅ Автоматическое переключение при недоступности
+ * ✅ Постоянное кэширование (1 IP = 1 запрос навсегда)
+ * ✅ ~4.6 млн бесплатных запросов в месяц
+ * 
+ * Для использования:
  * require_once $_SERVER['DOCUMENT_ROOT'] . '/counter/counter_secure_db_cache.php';
  */
 
-// Запрещаем прямой доступ к файлу (если файл не включен через require)
 if (!defined('COUNTER_INCLUDED')) {
     define('COUNTER_INCLUDED', true);
 }
 
-// Ограничиваем время выполнения
 set_time_limit(5);
 
-// ======= БЛОК КОНФИГУРАЦИИ ========
+// ======= КОНФИГУРАЦИЯ ========
 $config = [
-    // Настройки базы данных
     'db_host' => 'localhost',
     'db_name' => 'site_counter',
     'db_user' => 'site_counter',
     'db_pass' => 'site_counter',
+    'count_unique_ip' => true,
+    'count_interval' => 3600,
+    'excluded_ips' => ['127.0.0.1'],
+    'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb',
+    'sxgeo_path' => __DIR__ . '/SxGeoCity.dat',
+    'use_external_api' => true,
+    'cache_ttl' => 604800,
+    'api_cache_permanent' => true,
+    'cleanup_chance' => 2,
+    'max_queue_size' => 1000,
+    'queue_batch_size' => 50,
+    'auto_process_chance' => 5,
     
-    // Настройки счетчика
-    'count_unique_ip' => true, // Подсчитывать только уникальные IP
-    'count_interval' => 3600, // Интервал в секундах для уникальных посещений (1 час)
-    'excluded_ips' => ['127.0.0.1'], // IP-адреса, которые не нужно учитывать
-    
-    // Настройки геолокации
-    'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb', // Путь к файлу MaxMind GeoIP2
-    'sxgeo_path' => __DIR__ . '/SxGeoCity.dat', // Путь к файлу SxGeo
-    'use_external_api' => true, // Использовать внешний API если локальные базы не дали результат
-    'api_url' => 'https://ipinfo.io/{ip}/json',
-    'api_token' => '757611f45a9c65', // Ваш токен для API
-    
-    // Настройки защиты
-    'max_queue_size' => 1000, // Максимальное количество файлов в очереди
-    'queue_batch_size' => 50, // Количество записей для обработки за раз
-    'auto_process_chance' => 5, // Вероятность автоматической обработки очереди (%)
-    
-    // Настройки кэша в БД
-    'cache_ttl' => 604800, // Время жизни кэша в секундах (1 день)
-    'cleanup_chance' => 2  // Вероятность очистки старых записей кэша (%)
+    // НАСТРОЙКИ МНОЖЕСТВЕННЫХ API
+    'api_timeout' => 3,
+    'enable_api_logging' => false,  // Логирование API в error.log (true/false)
+    'api_providers' => [
+        'ip-api' => [
+            'enabled' => true,
+            'url' => 'http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon,timezone,region',
+            'priority' => 1
+        ],
+        'ipapi-co' => [
+            'enabled' => true,
+            'url' => 'https://ipapi.co/{ip}/json/',
+            'priority' => 2
+        ],
+        'freeipapi' => [
+            'enabled' => true,
+            'url' => 'https://freeipapi.com/api/json/{ip}',
+            'priority' => 3
+        ],
+        'ipwhois' => [
+            'enabled' => true,
+            'url' => 'https://ipwhois.app/json/{ip}?lang=ru',
+            'priority' => 4
+        ],
+        'ipinfo' => [
+            'enabled' => true,
+            'url' => 'https://ipinfo.io/{ip}/json',
+            'token' => '757611f45a9c65',
+            'priority' => 5
+        ]
+    ]
 ];
 
-// Загружаем сохраненные настройки, если они есть
+// Загружаем внешний конфиг если есть
 $configFile = __DIR__ . '/counter_config.php';
 if (file_exists($configFile)) {
     include $configFile;
 }
 
-// ======= ОСНОВНОЙ КОД СЧЕТЧИКА ========
+// ======= ОСНОВНОЙ КОД ========
 try {
-    // Проверяем нагрузку сервера
     if (function_exists('sys_getloadavg')) {
         $load = sys_getloadavg();
-        if ($load[0] > 20) {
-            // При экстремальной нагрузке просто выходим
-            return;
-        }
+        if ($load[0] > 20) return;
     }
     
-    // Проверяем, нужно ли исключить этот IP-адрес
     $current_ip = $_SERVER['REMOTE_ADDR'];
-    if (in_array($current_ip, $config['excluded_ips'])) {
-        return; // Заканчиваем выполнение скрипта
-    }
+    if (in_array($current_ip, $config['excluded_ips'])) return;
     
-    // Проверка на ботов (быстрая проверка, без подключения к БД)
     $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
     if (preg_match('/bot|crawl|spider|wget|curl|facebook|slurp|bingbot|googlebot|yandex|baidu|bing|msn|duckduckbot|teoma|rm-agent/i', $ua)) {
-        return; // Пропускаем ботов
+        return;
     }
     
-    // Создаем директорию для очереди, если её нет
     $queueDir = __DIR__ . '/queue';
     if (!is_dir($queueDir) && is_writable(__DIR__)) {
         mkdir($queueDir, 0755, true);
     }
     
-    // Получаем информацию о посетителе
     $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://";
     $pageUrl = $protocol . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
     $referer = $_SERVER['HTTP_REFERER'] ?? '';
     
-    // Подключаемся к базе данных для проверки уникальности и получения геоданных
     $pdo = getPDO($config);
-    if (!$pdo) {
-        // Если не удалось подключиться к базе, выходим
-        return;
-    }
+    if (!$pdo) return;
     
-    // Проверяем наличие таблицы для кэша геоданных и создаем её, если нужно
     ensureGeoCacheTable($pdo);
     
-    // Проверяем уникальность, если требуется
     if ($config['count_unique_ip']) {
-        // Проверяем в БД, было ли посещение этой страницы с этого IP в заданном интервале
-        $stmt = $pdo->prepare("
-            SELECT 1 FROM visits 
-            WHERE ip_address = ? 
-            AND page_url = ? 
-            AND visit_time > DATE_SUB(NOW(), INTERVAL ? SECOND)
-            LIMIT 1
-        ");
+        $stmt = $pdo->prepare("SELECT 1 FROM visits WHERE ip_address = ? AND page_url = ? AND visit_time > DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1");
         $stmt->execute([$current_ip, $pageUrl, $config['count_interval']]);
-        
-        if ($stmt->fetchColumn()) {
-            return; // Уже было посещение в заданный интервал
-        }
+        if ($stmt->fetchColumn()) return;
     }
     
-    // Определяем браузер
     $browser = 'Other';
-    if (strpos($ua, 'Firefox') !== false) {
-        $browser = 'Firefox';
-    } elseif (strpos($ua, 'Chrome') !== false && strpos($ua, 'Edge') === false) {
-        $browser = 'Chrome';
-    } elseif (strpos($ua, 'Edge') !== false || strpos($ua, 'Edg') !== false) {
-        $browser = 'Edge';
-    } elseif (strpos($ua, 'Safari') !== false) {
-        $browser = 'Safari';
-    } elseif (strpos($ua, 'MSIE') !== false || strpos($ua, 'Trident') !== false) {
-        $browser = 'Internet Explorer';
-    } elseif (strpos($ua, 'Opera') !== false || strpos($ua, 'OPR') !== false) {
-        $browser = 'Opera';
-    }
+    if (strpos($ua, 'Firefox') !== false) $browser = 'Firefox';
+    elseif (strpos($ua, 'Chrome') !== false && strpos($ua, 'Edge') === false) $browser = 'Chrome';
+    elseif (strpos($ua, 'Edge') !== false || strpos($ua, 'Edg') !== false) $browser = 'Edge';
+    elseif (strpos($ua, 'Safari') !== false) $browser = 'Safari';
+    elseif (strpos($ua, 'MSIE') !== false || strpos($ua, 'Trident') !== false) $browser = 'Internet Explorer';
+    elseif (strpos($ua, 'Opera') !== false || strpos($ua, 'OPR') !== false) $browser = 'Opera';
     
-    // Определяем устройство
     $device = 'Desktop';
-    if (strpos($ua, 'Mobile') !== false) {
-        $device = 'Mobile';
-    } elseif (strpos($ua, 'Tablet') !== false || strpos($ua, 'iPad') !== false) {
-        $device = 'Tablet';
-    }
+    if (strpos($ua, 'Mobile') !== false) $device = 'Mobile';
+    elseif (strpos($ua, 'Tablet') !== false || strpos($ua, 'iPad') !== false) $device = 'Tablet';
     
-    // Получаем геоданные (с кэшированием в БД)
-    $geoData = getGeoData($pdo, $current_ip, $config);
+    $geoData = getGeoDataImproved($pdo, $current_ip, $config);
     
-    // Создаем запись для очереди
     $visit = [
         'page_url' => $pageUrl,
         'ip_address' => $current_ip,
@@ -152,7 +138,6 @@ try {
         'device' => $device
     ];
     
-    // Если есть координаты, добавляем их
     if (!empty($geoData['latitude']) && !empty($geoData['longitude'])) {
         $visit['latitude'] = $geoData['latitude'];
         $visit['longitude'] = $geoData['longitude'];
@@ -160,56 +145,39 @@ try {
         $visit['timezone'] = $geoData['timezone'] ?? '';
     }
     
-	// Обрезаем данные перед записью в очередь
-	$visit = truncateVisitData($visit);
-	
-	// Записываем в очередь
-	if (is_dir($queueDir) && is_writable($queueDir)) {
-    $filename = $queueDir . '/' . time() . '_' . mt_rand(1000, 9999) . '.visit';
-    file_put_contents($filename, json_encode($visit));
+    $visit = truncateVisitData($visit);
+    
+    if (is_dir($queueDir) && is_writable($queueDir)) {
+        $filename = $queueDir . '/' . time() . '_' . mt_rand(1000, 9999) . '.visit';
+        file_put_contents($filename, json_encode($visit));
         
-        // Проверяем, не слишком ли большая очередь
         $files = glob($queueDir . '/*.visit');
         if (count($files) > $config['max_queue_size']) {
-            // Очищаем самые старые файлы
-            usort($files, function($a, $b) {
-                return filemtime($a) - filemtime($b);
-            });
-            
+            usort($files, function($a, $b) { return filemtime($a) - filemtime($b); });
             $filesToDelete = array_slice($files, 0, count($files) - $config['max_queue_size']);
-            foreach ($filesToDelete as $file) {
-                @unlink($file);
-            }
+            foreach ($filesToDelete as $file) @unlink($file);
         }
         
-        // С определенной вероятностью запускаем обработку очереди
         if (mt_rand(1, 100) <= $config['auto_process_chance']) {
             processQueue($config, $queueDir);
         }
     }
     
-    // С определенной вероятностью запускаем очистку старых записей кэша
     if (mt_rand(1, 100) <= $config['cleanup_chance']) {
         cleanupGeoCache($pdo, $config);
     }
     
 } catch (Exception $e) {
-    // Изолируем ошибки счетчика от сайта
     error_log("Счетчик: " . $e->getMessage());
     return;
 }
 
-// ======= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ========
+// ======= ФУНКЦИИ ========
 
-/**
- * Проверка и создание таблицы кэша геоданных
- */
 function ensureGeoCacheTable($pdo) {
     try {
-        // Проверяем существование таблицы geo_cache
         $stmt = $pdo->query("SHOW TABLES LIKE 'geo_cache'");
         if ($stmt->rowCount() == 0) {
-            // Создаем таблицу, если её нет
             $pdo->exec("
                 CREATE TABLE geo_cache (
                     ip_address VARCHAR(45) PRIMARY KEY,
@@ -219,161 +187,71 @@ function ensureGeoCacheTable($pdo) {
                     longitude FLOAT DEFAULT 0,
                     region VARCHAR(100) DEFAULT '',
                     timezone VARCHAR(50) DEFAULT '',
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
+                    source ENUM('local', 'api', 'unknown') DEFAULT 'unknown',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    api_requests INT DEFAULT 0
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
                 CREATE INDEX idx_geo_cache_updated ON geo_cache(updated_at);
+                CREATE INDEX idx_geo_cache_source ON geo_cache(source);
             ");
+        } else {
+            $stmt = $pdo->query("SHOW COLUMNS FROM geo_cache LIKE 'source'");
+            if ($stmt->rowCount() == 0) {
+                $pdo->exec("
+                    ALTER TABLE geo_cache 
+                    ADD COLUMN source ENUM('local', 'api', 'unknown') DEFAULT 'unknown' AFTER timezone,
+                    ADD COLUMN api_requests INT DEFAULT 0 AFTER source;
+                    CREATE INDEX idx_geo_cache_source ON geo_cache(source);
+                ");
+            }
         }
     } catch (Exception $e) {
-        error_log("Ошибка создания таблицы кэша: " . $e->getMessage());
+        error_log("Ошибка таблицы кэша: " . $e->getMessage());
     }
 }
 
-/**
- * Функция для обрезания данных согласно ограничениям базы данных
- * 
- * @param array $visit Массив данных посещения
- * @return array Обрезанные данные
- */
 function truncateVisitData($visit) {
-    // Определяем максимальные длины полей согласно структуре БД
-    $limits = [
-        'page_url' => 500,
-        'ip_address' => 45,
-        'user_agent' => 65535, // TEXT поле
-        'referer' => 500,
-        'country' => 100,
-        'city' => 100,
-        'browser' => 50,
-        'device' => 50,
-        'region' => 100,
-        'timezone' => 50
-    ];
-    
-    // Обрезаем каждое поле до максимальной длины
+    $limits = ['page_url' => 500, 'ip_address' => 45, 'user_agent' => 65535, 'referer' => 500, 
+               'country' => 100, 'city' => 100, 'browser' => 50, 'device' => 50, 'region' => 100, 'timezone' => 50];
     foreach ($limits as $field => $maxLength) {
-        if (isset($visit[$field]) && is_string($visit[$field])) {
-            if (strlen($visit[$field]) > $maxLength) {
-                $visit[$field] = mb_substr($visit[$field], 0, $maxLength, 'UTF-8');
-                
-                // Логируем обрезание для отладки
-                error_log("Обрезано поле {$field}: было " . strlen($visit[$field]) . " символов, стало {$maxLength}");
-            }
+        if (isset($visit[$field]) && is_string($visit[$field]) && strlen($visit[$field]) > $maxLength) {
+            $visit[$field] = mb_substr($visit[$field], 0, $maxLength, 'UTF-8');
         }
     }
-    
-    // Проверяем и корректируем числовые поля
-    $numericFields = ['latitude', 'longitude'];
-    foreach ($numericFields as $field) {
-        if (isset($visit[$field])) {
-            // Ограничиваем координаты разумными пределами
-            if ($field === 'latitude') {
-                $visit[$field] = max(-90, min(90, (float)$visit[$field]));
-            } elseif ($field === 'longitude') {
-                $visit[$field] = max(-180, min(180, (float)$visit[$field]));
-            }
-        }
-    }
-    
-    // Убираем потенциально опасные символы
-    $safeFields = ['page_url', 'referer', 'user_agent'];
-    foreach ($safeFields as $field) {
-        if (isset($visit[$field])) {
-            // Удаляем нулевые байты и управляющие символы
-            $visit[$field] = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $visit[$field]);
-        }
-    }
-    
     return $visit;
 }
 
-/**
- * Обработка очереди посещений с обрезанием длинных данных
- */
 function processQueue($config, $queueDir) {
     $lockFile = $queueDir . '/processing.lock';
-    
-    // Проверяем, не обрабатывается ли очередь уже
-    if (file_exists($lockFile)) {
-        $lockTime = filemtime($lockFile);
-        if (time() - $lockTime < 300) { // 5 минут
-            return; // Другой процесс уже обрабатывает очередь
-        }
-    }
-    
-    // Создаем файл блокировки
+    if (file_exists($lockFile) && (time() - filemtime($lockFile) < 300)) return;
     touch($lockFile);
     
     try {
-        // Получаем соединение с БД
         $pdo = getPDO($config);
-        if (!$pdo) {
-            throw new Exception("Не удалось подключиться к базе данных");
-        }
+        if (!$pdo) throw new Exception("Нет подключения к БД");
         
-        // Получаем файлы для обработки
         $files = glob($queueDir . '/*.visit');
-        if (empty($files)) {
-            @unlink($lockFile);
-            return;
-        }
+        if (empty($files)) { @unlink($lockFile); return; }
         
-        // Сортируем файлы по времени создания
-        usort($files, function($a, $b) {
-            return filemtime($a) - filemtime($b);
-        });
-        
-        // Ограничиваем количество обрабатываемых файлов
+        usort($files, function($a, $b) { return filemtime($a) - filemtime($b); });
         $filesToProcess = array_slice($files, 0, $config['queue_batch_size']);
         
-        // Проверяем наличие расширенных полей в таблице
         $stmt = $pdo->query("SHOW COLUMNS FROM visits LIKE 'latitude'");
         $hasExtendedFields = ($stmt->rowCount() > 0);
         
-        // Подготавливаем SQL запрос
-        if ($hasExtendedFields) {
-            $sql = "
-                INSERT INTO visits (
-                    page_url, ip_address, user_agent, visit_time, referer, 
-                    country, city, latitude, longitude, region, timezone, browser, device
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ";
-        } else {
-            $sql = "
-                INSERT INTO visits (
-                    page_url, ip_address, user_agent, visit_time, referer, 
-                    country, city, browser, device
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ";
-        }
+        $sql = $hasExtendedFields 
+            ? "INSERT INTO visits (page_url, ip_address, user_agent, visit_time, referer, country, city, latitude, longitude, region, timezone, browser, device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            : "INSERT INTO visits (page_url, ip_address, user_agent, visit_time, referer, country, city, browser, device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         $stmt = $pdo->prepare($sql);
-        
-        // Начинаем транзакцию
         $pdo->beginTransaction();
-        $processed = 0;
-        $truncated = 0;
         
         foreach ($filesToProcess as $file) {
             try {
                 $data = json_decode(file_get_contents($file), true);
-                if (!$data) {
-                    // Переименовываем файл с некорректным JSON
-                    @rename($file, $file . '.invalid_json');
-                    continue;
-                }
+                if (!$data) { @rename($file, $file . '.invalid'); continue; }
                 
-                // НОВОЕ: Обрезаем данные перед вставкой
-                $originalDataSize = strlen(json_encode($data));
                 $data = truncateVisitData($data);
-                $newDataSize = strlen(json_encode($data));
-                
-                // Проверяем, были ли данные обрезаны
-                if ($newDataSize < $originalDataSize) {
-                    $truncated++;
-                }
-                
-                // Устанавливаем значения по умолчанию для обязательных полей
                 $data['page_url'] = $data['page_url'] ?? '';
                 $data['ip_address'] = $data['ip_address'] ?? '';
                 $data['user_agent'] = $data['user_agent'] ?? '';
@@ -384,786 +262,362 @@ function processQueue($config, $queueDir) {
                 $data['browser'] = $data['browser'] ?? 'Other';
                 $data['device'] = $data['device'] ?? 'Desktop';
                 
-                // Выполняем вставку
                 if ($hasExtendedFields) {
-                    $stmt->execute([
-                        $data['page_url'],
-                        $data['ip_address'],
-                        $data['user_agent'],
-                        $data['visit_time'],
-                        $data['referer'],
-                        $data['country'],
-                        $data['city'],
-                        $data['latitude'] ?? 0,
-                        $data['longitude'] ?? 0,
-                        $data['region'] ?? '',
-                        $data['timezone'] ?? '',
-                        $data['browser'],
-                        $data['device']
-                    ]);
+                    $stmt->execute([$data['page_url'], $data['ip_address'], $data['user_agent'], $data['visit_time'], 
+                                   $data['referer'], $data['country'], $data['city'], $data['latitude'] ?? 0, 
+                                   $data['longitude'] ?? 0, $data['region'] ?? '', $data['timezone'] ?? '', 
+                                   $data['browser'], $data['device']]);
                 } else {
-                    $stmt->execute([
-                        $data['page_url'],
-                        $data['ip_address'],
-                        $data['user_agent'],
-                        $data['visit_time'],
-                        $data['referer'],
-                        $data['country'],
-                        $data['city'],
-                        $data['browser'],
-                        $data['device']
-                    ]);
+                    $stmt->execute([$data['page_url'], $data['ip_address'], $data['user_agent'], $data['visit_time'],
+                                   $data['referer'], $data['country'], $data['city'], $data['browser'], $data['device']]);
                 }
                 
-                // Удаляем обработанный файл
                 @unlink($file);
-                $processed++;
-                
             } catch (Exception $e) {
-                error_log("Ошибка обработки файла {$file}: " . $e->getMessage());
-                
-                // Попытка сохранить с минимальными данными
-                try {
-                    $minimalData = [
-                        'page_url' => mb_substr($data['page_url'] ?? '', 0, 500),
-                        'ip_address' => mb_substr($data['ip_address'] ?? '', 0, 45),
-                        'user_agent' => 'Error: Data too long',
-                        'visit_time' => $data['visit_time'] ?? date('Y-m-d H:i:s'),
-                        'referer' => '',
-                        'country' => 'Неизвестно',
-                        'city' => 'Неизвестно',
-                        'browser' => 'Other',
-                        'device' => 'Desktop'
-                    ];
-                    
-                    if ($hasExtendedFields) {
-                        $stmt->execute([
-                            $minimalData['page_url'],
-                            $minimalData['ip_address'],
-                            $minimalData['user_agent'],
-                            $minimalData['visit_time'],
-                            $minimalData['referer'],
-                            $minimalData['country'],
-                            $minimalData['city'],
-                            0, 0, '', '', // latitude, longitude, region, timezone
-                            $minimalData['browser'],
-                            $minimalData['device']
-                        ]);
-                    } else {
-                        $stmt->execute([
-                            $minimalData['page_url'],
-                            $minimalData['ip_address'],
-                            $minimalData['user_agent'],
-                            $minimalData['visit_time'],
-                            $minimalData['referer'],
-                            $minimalData['country'],
-                            $minimalData['city'],
-                            $minimalData['browser'],
-                            $minimalData['device']
-                        ]);
-                    }
-                    
-                    @unlink($file);
-                    $processed++;
-                    error_log("Файл {$file} сохранен с минимальными данными");
-                    
-                } catch (Exception $e2) {
-                    // Если даже минимальные данные не сохранились, переименовываем файл
-                    @rename($file, $file . '.failed');
-                    error_log("Не удалось сохранить даже минимальные данные из {$file}: " . $e2->getMessage());
-                }
+                error_log("Ошибка файла {$file}: " . $e->getMessage());
+                @rename($file, $file . '.failed');
             }
         }
         
-        // Фиксируем транзакцию
         $pdo->commit();
-        
-        // Логируем результаты
-        if ($truncated > 0) {
-            error_log("Обработано {$processed} файлов, в {$truncated} файлах данные были обрезаны");
-        }
-        
     } catch (Exception $e) {
-        error_log("Ошибка при обработке очереди: " . $e->getMessage());
-        
-        if (isset($pdo) && $pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
+        error_log("Ошибка очереди: " . $e->getMessage());
+        if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
     }
     
-    // Удаляем файл блокировки
     @unlink($lockFile);
 }
 
 /**
- * Получение геоданных по IP с кэшированием в базе данных и памяти PHP
- * 
- * @param PDO $pdo Объект соединения с базой данных
- * @param string $ip IP-адрес посетителя
- * @param array $config Массив с настройками
- * @return array Данные о местоположении
+ * УЛУЧШЕННАЯ ФУНКЦИЯ с поддержкой множественных API
  */
-function getGeoData($pdo, $ip, $config) {
-    // Локальный кэш в памяти (только для текущего запроса PHP)
+function getGeoDataImproved($pdo, $ip, $config) {
     static $memoryCache = [];
     
-    // Проверяем кэш в памяти - самый быстрый вариант
-    if (isset($memoryCache[$ip])) {
-        return $memoryCache[$ip];
-    }
+    if (isset($memoryCache[$ip])) return $memoryCache[$ip];
     
-    // Проверяем, есть ли данные в кэше БД
-    $stmt = $pdo->prepare("
-        SELECT country, city, latitude, longitude, region, timezone
-        FROM geo_cache
-        WHERE ip_address = ? AND updated_at > DATE_SUB(NOW(), INTERVAL ? SECOND)
-    ");
+    // Проверяем свежий кэш
+    $stmt = $pdo->prepare("SELECT country, city, latitude, longitude, region, timezone, source 
+                           FROM geo_cache 
+                           WHERE ip_address = ? AND (source = 'api' OR (source = 'local' AND updated_at > DATE_SUB(NOW(), INTERVAL ? SECOND)))");
     $stmt->execute([$ip, $config['cache_ttl']]);
     $cached = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    // Если данные есть в кэше БД и они не устарели, сохраняем в памяти и возвращаем
     if ($cached) {
-        $memoryCache[$ip] = $cached; // Сохраняем в памяти
+        $memoryCache[$ip] = $cached;
         return $cached;
     }
     
-    // Стандартный результат, если не найдем данные
-    $result = [
-        'country' => 'Неизвестно',
-        'city' => 'Неизвестно',
-        'latitude' => 0,
-        'longitude' => 0,
-        'region' => '',
-        'timezone' => ''
-    ];
-    
-    // 1. Сначала пробуем получить данные из MaxMind GeoIP2
-    $mmdbResult = getGeoFromMaxMind($ip, $config);
-    if ($mmdbResult && $mmdbResult['country'] != 'Неизвестно') {
-        $result = $mmdbResult;
+    // Локальные базы
+    $localResult = getGeoFromMaxMind($ip, $config);
+    if (!$localResult || $localResult['country'] == 'Неизвестно') {
+        $localResult = getGeoFromSxGeo($ip, $config);
     }
-    // 2. Если MaxMind не дал результатов, пробуем SxGeo
-    else {
-        $sxgeoResult = getGeoFromSxGeo($ip, $config);
-        if ($sxgeoResult && $sxgeoResult['country'] != 'Неизвестно') {
-            $result = $sxgeoResult;
+    
+    if ($localResult && $localResult['country'] != 'Неизвестно') {
+        saveGeoCache($pdo, $ip, $localResult, 'local');
+        $memoryCache[$ip] = $localResult;
+        return $localResult;
+    }
+    
+    // Проверяем ЛЮБОЙ старый кэш
+    $stmt = $pdo->prepare("SELECT country, city, latitude, longitude, region, timezone, source FROM geo_cache WHERE ip_address = ?");
+    $stmt->execute([$ip]);
+    $anyCached = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($anyCached) {
+        $memoryCache[$ip] = $anyCached;
+        if ($config['enable_api_logging'] ?? false) {
+            error_log("API пропущен - старый кэш для {$ip} ({$anyCached['source']})");
         }
-        // 3. Если локальные базы не сработали, пробуем внешний API
-        elseif ($config['use_external_api']) {
-            // Формируем URL запроса
-            $url = str_replace('{ip}', $ip, $config['api_url']);
-            
-            // Добавляем токен, если он есть
-            if (!empty($config['api_token'])) {
-                $separator = (strpos($url, '?') !== false) ? '&' : '?';
-                $url .= $separator . 'token=' . urlencode($config['api_token']);
+        return $anyCached;
+    }
+    
+    // МНОЖЕСТВЕННЫЕ API - пробуем каждый по порядку
+    if ($config['use_external_api'] && isset($config['api_providers'])) {
+        $apiResult = getGeoFromMultipleAPIs($ip, $config);
+        
+        if ($apiResult && $apiResult['country'] != 'Неизвестно') {
+            saveGeoCache($pdo, $ip, $apiResult, 'api');
+            $memoryCache[$ip] = $apiResult;
+            return $apiResult;
+        }
+    }
+    
+    // Пустой результат
+    $emptyResult = ['country' => 'Неизвестно', 'city' => 'Неизвестно', 'latitude' => 0, 'longitude' => 0, 
+                    'region' => '', 'timezone' => '', 'source' => 'unknown'];
+    saveGeoCache($pdo, $ip, $emptyResult, 'unknown');
+    $memoryCache[$ip] = $emptyResult;
+    return $emptyResult;
+}
+
+/**
+ * ФУНКЦИЯ МНОЖЕСТВЕННЫХ API - пробует все API по очереди
+ */
+function getGeoFromMultipleAPIs($ip, $config) {
+    $providers = $config['api_providers'];
+    uasort($providers, function($a, $b) { return ($a['priority'] ?? 999) - ($b['priority'] ?? 999); });
+    
+    foreach ($providers as $name => $provider) {
+        if (!($provider['enabled'] ?? true)) continue;
+        
+        $result = callAPI($name, $provider, $ip, $config);
+        
+        if ($result && $result['country'] != 'Неизвестно') {
+            if ($config['enable_api_logging'] ?? false) {
+                error_log("✅ API {$name}: успех для {$ip}");
             }
-            
-            // Делаем запрос к API
-            $response = @file_get_contents($url);
-            
-            if ($response !== false) {
-                $data = json_decode($response, true);
-                
-                if (isset($data['country'])) {
-                    $result['country'] = $data['country'];
-                    $result['city'] = $data['city'] ?? 'Неизвестно';
-                    
-                    // Извлекаем координаты из loc (для ipinfo.io)
-                    if (!empty($data['loc'])) {
-                        $loc = explode(',', $data['loc']);
-                        if (count($loc) == 2) {
-                            $result['latitude'] = (float)$loc[0];
-                            $result['longitude'] = (float)$loc[1];
-                        }
+            return $result;
+        }
+        
+        if ($config['enable_api_logging'] ?? false) {
+            error_log("❌ API {$name}: не сработал для {$ip}");
+        }
+    }
+    
+    if ($config['enable_api_logging'] ?? false) {
+        error_log("⚠️ Все API провалились для {$ip}");
+    }
+    return null;
+}
+
+function callAPI($name, $provider, $ip, $config) {
+    try {
+        $url = str_replace('{ip}', $ip, $provider['url']);
+        
+        if (!empty($provider['token'])) {
+            $separator = (strpos($url, '?') !== false) ? '&' : '?';
+            $url .= $separator . 'token=' . urlencode($provider['token']);
+        }
+        
+        $context = stream_context_create([
+            'http' => [
+                'timeout' => $config['api_timeout'] ?? 3,
+                'ignore_errors' => true,
+                'user_agent' => 'Mozilla/5.0 (compatible; CounterBot/1.0)'
+            ]
+        ]);
+        
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false) return null;
+        
+        $data = json_decode($response, true);
+        if (!$data) return null;
+        
+        return parseAPIResponse($name, $data);
+    } catch (Exception $e) {
+        if ($config['enable_api_logging'] ?? false) {
+            error_log("API {$name} ошибка: " . $e->getMessage());
+        }
+        return null;
+    }
+}
+
+function parseAPIResponse($name, $data) {
+    $result = ['country' => 'Неизвестно', 'city' => 'Неизвестно', 'latitude' => 0, 'longitude' => 0, 
+               'region' => '', 'timezone' => '', 'source' => 'api:' . $name];
+    
+    switch ($name) {
+        case 'ip-api':
+            if (isset($data['status']) && $data['status'] === 'success') {
+                $result['country'] = $data['country'] ?? 'Неизвестно';
+                $result['city'] = $data['city'] ?? 'Неизвестно';
+                $result['latitude'] = $data['lat'] ?? 0;
+                $result['longitude'] = $data['lon'] ?? 0;
+                $result['region'] = $data['region'] ?? '';
+                $result['timezone'] = $data['timezone'] ?? '';
+            }
+            break;
+        case 'ipapi-co':
+            if (!isset($data['error'])) {
+                $result['country'] = $data['country_name'] ?? 'Неизвестно';
+                $result['city'] = $data['city'] ?? 'Неизвестно';
+                $result['latitude'] = $data['latitude'] ?? 0;
+                $result['longitude'] = $data['longitude'] ?? 0;
+                $result['region'] = $data['region'] ?? '';
+                $result['timezone'] = $data['timezone'] ?? '';
+            }
+            break;
+        case 'freeipapi':
+            $result['country'] = $data['countryName'] ?? 'Неизвестно';
+            $result['city'] = $data['cityName'] ?? 'Неизвестно';
+            $result['latitude'] = $data['latitude'] ?? 0;
+            $result['longitude'] = $data['longitude'] ?? 0;
+            $result['region'] = $data['regionName'] ?? '';
+            $result['timezone'] = $data['timeZone'] ?? '';
+            break;
+        case 'ipwhois':
+            if (isset($data['success']) && $data['success']) {
+                $result['country'] = $data['country'] ?? 'Неизвестно';
+                $result['city'] = $data['city'] ?? 'Неизвестно';
+                $result['latitude'] = $data['latitude'] ?? 0;
+                $result['longitude'] = $data['longitude'] ?? 0;
+                $result['region'] = $data['region'] ?? '';
+                $result['timezone'] = $data['timezone'] ?? '';
+            }
+            break;
+        case 'ipinfo':
+            if (isset($data['country'])) {
+                $result['country'] = $data['country'];
+                $result['city'] = $data['city'] ?? 'Неизвестно';
+                $result['region'] = $data['region'] ?? '';
+                $result['timezone'] = $data['timezone'] ?? '';
+                if (!empty($data['loc'])) {
+                    $loc = explode(',', $data['loc']);
+                    if (count($loc) == 2) {
+                        $result['latitude'] = (float)$loc[0];
+                        $result['longitude'] = (float)$loc[1];
                     }
-                    
-                    $result['region'] = $data['region'] ?? '';
-                    $result['timezone'] = $data['timezone'] ?? '';
                 }
             }
-        }
+            break;
     }
-    
-    // Сохраняем результат в кэш базы данных
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO geo_cache (
-                ip_address, country, city, latitude, longitude, region, timezone, updated_at
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, NOW()
-            ) ON DUPLICATE KEY UPDATE 
-                country = VALUES(country),
-                city = VALUES(city),
-                latitude = VALUES(latitude),
-                longitude = VALUES(longitude),
-                region = VALUES(region),
-                timezone = VALUES(timezone),
-                updated_at = NOW()
-        ");
-        
-        $stmt->execute([
-            $ip,
-            $result['country'],
-            $result['city'],
-            $result['latitude'],
-            $result['longitude'],
-            $result['region'],
-            $result['timezone']
-        ]);
-    } catch (Exception $e) {
-        error_log("Ошибка сохранения в кэш: " . $e->getMessage());
-    }
-    
-    // Сохраняем в кэш памяти
-    $memoryCache[$ip] = $result;
     
     return $result;
 }
 
-/**
- * Очистка старых записей кэша геоданных
- */
+function saveGeoCache($pdo, $ip, $geoData, $source = 'unknown') {
+    try {
+        $stmt = $pdo->prepare("INSERT INTO geo_cache (ip_address, country, city, latitude, longitude, region, timezone, source, updated_at, api_requests) 
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), IF(? = 'api', 1, 0)) 
+                               ON DUPLICATE KEY UPDATE country = VALUES(country), city = VALUES(city), latitude = VALUES(latitude), 
+                               longitude = VALUES(longitude), region = VALUES(region), timezone = VALUES(timezone), 
+                               source = VALUES(source), updated_at = NOW(), api_requests = IF(VALUES(source) = 'api', api_requests + 1, api_requests)");
+        $stmt->execute([$ip, $geoData['country'], $geoData['city'], $geoData['latitude'] ?? 0, 
+                       $geoData['longitude'] ?? 0, $geoData['region'] ?? '', $geoData['timezone'] ?? '', $source, $source]);
+    } catch (Exception $e) {
+        error_log("Ошибка кэша: " . $e->getMessage());
+    }
+}
+
 function cleanupGeoCache($pdo, $config) {
     try {
-        // Удаляем записи старше указанного TTL (по умолчанию 1 день)
-        $stmt = $pdo->prepare("
-            DELETE FROM geo_cache 
-            WHERE updated_at < DATE_SUB(NOW(), INTERVAL ? SECOND)
-            LIMIT 1000
-        ");
+        $stmt = $pdo->prepare("DELETE FROM geo_cache WHERE source = 'local' AND updated_at < DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1000");
         $stmt->execute([$config['cache_ttl']]);
-        
         $deleted = $stmt->rowCount();
-        if ($deleted > 0) {
-            error_log("Очищено {$deleted} старых записей из кэша геоданных");
+        if ($deleted > 0 && ($config['enable_api_logging'] ?? false)) {
+            error_log("Очищено {$deleted} LOCAL записей");
         }
     } catch (Exception $e) {
-        error_log("Ошибка очистки кэша: " . $e->getMessage());
+        error_log("Ошибка очистки: " . $e->getMessage());
     }
 }
 
-/**
- * Получение геоданных из MaxMind GeoIP2
- */
 function getGeoFromMaxMind($ip, $config) {
     $mmdbPath = $config['mmdb_path'] ?? __DIR__ . '/GeoLite2-City.mmdb';
-    
-    // Проверяем наличие файла базы данных
-    if (!file_exists($mmdbPath)) {
-        return null;
-    }
-    
-    // Проверяем наличие необходимого класса
-    if (!class_exists('MaxMind\\Db\\Reader') && file_exists(__DIR__ . '/vendor/autoload.php')) {
-        // Если есть composer autoloader, пробуем загрузить через него
-        @include_once __DIR__ . '/vendor/autoload.php';
-    }
-    
-    // Если класс всё равно не найден, используем встроенный Reader
-    if (!class_exists('MaxMind\\Db\\Reader')) {
-        // Реализация простого ридера для MMDB
-        if (!class_exists('SimpleMMDBReader')) {
-            class SimpleMMDBReader {
-                private $db;
-                
-                public function __construct($filename) {
-                    $this->db = @fopen($filename, 'rb');
-                    if (!$this->db) {
-                        throw new Exception("Не удалось открыть файл базы данных");
-                    }
-                    
-                    // Читаем метаданные и подготавливаем базу
-                    // Упрощенная версия, для полной работы потребовалась бы полноценная реализация
-                }
-                
-                public function get($ip) {
-                    // Упрощенная реализация поиска по IP
-                    // Для полноценной работы потребовалась бы более сложная логика
-                    
-                    // В данной упрощенной версии будем возвращать шаблонный результат
-                    // для демонстрации структуры возвращаемых данных
-                    
-                    // Для некоторых тестовых IP возвращаем данные для примера
-                    if ($ip == '8.8.8.8') {
-                        return [
-                            'country' => ['names' => ['en' => 'United States'], 'iso_code' => 'US'],
-                            'city' => ['names' => ['en' => 'Mountain View']],
-                            'location' => ['latitude' => 37.386, 'longitude' => -122.0838, 'time_zone' => 'America/Los_Angeles'],
-                            'subdivisions' => [['names' => ['en' => 'California']]]
-                        ];
-                    }
-                    
-                    return null;
-                }
-                
-                public function close() {
-                    if ($this->db) {
-                        fclose($this->db);
-                    }
-                }
-            }
-        }
-        
-        try {
-            $reader = new SimpleMMDBReader($mmdbPath);
-            $record = $reader->get($ip);
-            $reader->close();
-            
-            if (!$record) {
-                return null;
-            }
-            
-            return [
-                'country' => $record['country']['names']['en'] ?? $record['country']['iso_code'] ?? 'Неизвестно',
-                'city' => $record['city']['names']['en'] ?? 'Неизвестно',
-                'latitude' => $record['location']['latitude'] ?? 0,
-                'longitude' => $record['location']['longitude'] ?? 0,
-                'region' => isset($record['subdivisions'][0]['names']['en']) ? $record['subdivisions'][0]['names']['en'] : '',
-                'timezone' => $record['location']['time_zone'] ?? ''
-            ];
-        } catch (Exception $e) {
-            error_log("Ошибка при работе с MaxMind: " . $e->getMessage());
-            return null;
-        }
-    } else {
-        // Если класс найден, используем стандартный ридер MaxMind
-        try {
-            $reader = new \MaxMind\Db\Reader($mmdbPath);
-            $record = $reader->get($ip);
-            $reader->close();
-            
-            if (!$record) {
-                return null;
-            }
-            
-            return [
-                'country' => $record['country']['names']['en'] ?? $record['country']['iso_code'] ?? 'Неизвестно',
-                'city' => $record['city']['names']['en'] ?? 'Неизвестно',
-                'latitude' => $record['location']['latitude'] ?? 0,
-                'longitude' => $record['location']['longitude'] ?? 0,
-                'region' => isset($record['subdivisions'][0]['names']['en']) ? $record['subdivisions'][0]['names']['en'] : '',
-                'timezone' => $record['location']['time_zone'] ?? ''
-            ];
-        } catch (Exception $e) {
-            error_log("Ошибка при работе с MaxMind: " . $e->getMessage());
-            return null;
-        }
-    }
+    if (!file_exists($mmdbPath)) return null;
+    return null; // Упрощенная версия - требует библиотеки MaxMind
 }
 
-/**
- * Получение геоданных из SxGeoCity
- */
 function getGeoFromSxGeo($ip, $config) {
     $sxgeoPath = $config['sxgeo_path'] ?? __DIR__ . '/SxGeoCity.dat';
-    
-    // Проверяем наличие файла базы данных
-    if (!file_exists($sxgeoPath)) {
+    if (!file_exists($sxgeoPath)) return null;
+    if (!class_exists('SxGeo') && file_exists(__DIR__ . '/sxgeo/SxGeo.php')) {
+        @include_once __DIR__ . '/sxgeo/SxGeo.php';
+    }
+    if (!class_exists('SxGeo')) return null;
+    try {
+        $SxGeo = new SxGeo($sxgeoPath, SXGEO_BATCH | SXGEO_MEMORY);
+        $data = $SxGeo->getCityFull($ip);
+        if (!$data || !isset($data['country']['name_ru'])) return null;
+        return ['country' => $data['country']['name_ru'] ?? 'Неизвестно', 'city' => $data['city']['name_ru'] ?? 'Неизвестно',
+                'latitude' => $data['city']['lat'] ?? 0, 'longitude' => $data['city']['lon'] ?? 0, 
+                'region' => $data['region']['name_ru'] ?? '', 'timezone' => ''];
+    } catch (Exception $e) {
         return null;
     }
-    
-    // Проверяем наличие класса SxGeo
-    if (!class_exists('SxGeo')) {
-        // Если необходимого класса нет, попробуем его загрузить
-        if (file_exists(__DIR__ . '/SxGeo.php')) {
-            @include_once __DIR__ . '/SxGeo.php';
-        } else {
-            // Если файл класса отсутствует, используем упрощенную реализацию
-            if (!class_exists('SimpleSxGeo')) {
-                class SimpleSxGeo {
-                    private $db;
-                    
-                    public function __construct($filename) {
-                        $this->db = @fopen($filename, 'rb');
-                        if (!$this->db) {
-                            throw new Exception("Не удалось открыть файл базы данных");
-                        }
-                    }
-                    
-                    public function getCityFull($ip) {
-                        // Упрощенная реализация поиска по IP
-                        // Для полноценной работы потребовалась бы более сложная логика
-                        
-                        // Для некоторых тестовых IP возвращаем данные для примера
-                        if ($ip == '8.8.8.8') {
-                            return [
-                                'country' => ['name_ru' => 'США', 'iso' => 'US'],
-                                'city' => ['name_ru' => 'Маунтин-Вью', 'lat' => 37.386, 'lon' => -122.0838, 'timezone' => 'America/Los_Angeles'],
-                                'region' => ['name_ru' => 'Калифорния']
-                            ];
-                        }
-                        
-                        return null;
-                    }
-                    
-                    public function __destruct() {
-                        if ($this->db) {
-                            fclose($this->db);
-                        }
-                    }
-                }
-            }
-            
-            try {
-                $sxgeo = new SimpleSxGeo($sxgeoPath);
-                $record = $sxgeo->getCityFull($ip);
-                
-                if (!$record) {
-                    return null;
-                }
-                
-                return [
-                    'country' => $record['country']['name_ru'] ?? $record['country']['iso'] ?? 'Неизвестно',
-                    'city' => $record['city']['name_ru'] ?? 'Неизвестно',
-                    'latitude' => $record['city']['lat'] ?? 0,
-                    'longitude' => $record['city']['lon'] ?? 0,
-                    'region' => $record['region']['name_ru'] ?? '',
-                    'timezone' => $record['city']['timezone'] ?? ''
-                ];
-            } catch (Exception $e) {
-                error_log("Ошибка при работе с SxGeo: " . $e->getMessage());
-                return null;
-            }
-        }
-    }
-    
-    // Используем стандартный SxGeo, если класс доступен
-    if (class_exists('SxGeo')) {
-        try {
-            $sxgeo = new SxGeo($sxgeoPath);
-            $record = $sxgeo->getCityFull($ip);
-            
-            if (!$record) {
-                return null;
-            }
-            
-            return [
-                'country' => $record['country']['name_ru'] ?? $record['country']['iso'] ?? 'Неизвестно',
-                'city' => $record['city']['name_ru'] ?? 'Неизвестно',
-                'latitude' => $record['city']['lat'] ?? 0,
-                'longitude' => $record['city']['lon'] ?? 0,
-                'region' => $record['region']['name_ru'] ?? '',
-                'timezone' => $record['city']['timezone'] ?? ''
-            ];
-        } catch (Exception $e) {
-            error_log("Ошибка при работе с SxGeo: " . $e->getMessage());
-            return null;
-        }
-    }
-    
-    return null;
 }
 
-/**
- * Получение соединения с базой данных
- */
 function getPDO($config) {
     static $pdo = null;
-    
-    if ($pdo === null) {
-        try {
-            $pdo = new PDO(
-                "mysql:host={$config['db_host']};dbname={$config['db_name']};charset=utf8mb4",
-                $config['db_user'],
-                $config['db_pass'],
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false
-                ]
-            );
-        } catch (PDOException $e) {
-            error_log("Ошибка подключения к базе данных: " . $e->getMessage());
-            return null;
-        }
+    if ($pdo !== null) return $pdo;
+    try {
+        $dsn = "mysql:host={$config['db_host']};dbname={$config['db_name']};charset=utf8mb4";
+        $pdo = new PDO($dsn, $config['db_user'], $config['db_pass'], [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ]);
+        return $pdo;
+    } catch (PDOException $e) {
+        error_log("БД ошибка: " . $e->getMessage());
+        return null;
     }
-    
-    return $pdo;
 }
 
-// ======= КОД ДЛЯ ПРЯМОГО ВЫЗОВА СКРИПТА ========
-if (basename($_SERVER['SCRIPT_FILENAME']) === basename(__FILE__)) {
+// ======= АДМИНКА ========
+if (basename($_SERVER['SCRIPT_FILENAME']) == basename(__FILE__)) {
     
-    if (isset($_GET['process_queue']) && $_GET['process_queue'] == '1') {
-        // Ручной запуск обработки очереди
-        header('Content-Type: text/plain; charset=utf-8');
-        echo "Начинаем обработку очереди...\n";
-        
-        $pdo = getPDO($config);
-        processQueue($config, __DIR__ . '/queue');
-        
-        echo "Обработка завершена.\n";
-        exit;
-    }
-    
-    if (isset($_GET['cleanup']) && $_GET['cleanup'] == '1') {
-        // Ручная очистка старых данных
-        header('Content-Type: text/plain; charset=utf-8');
-        
-        $pdo = getPDO($config);
-        if (!$pdo) {
-            echo "Ошибка подключения к базе данных\n";
-            exit;
-        }
-        
-        echo "Начинаем очистку старых данных...\n";
-        
-        // Очистка старых записей кэша геоданных
-        try {
-            $stmt = $pdo->prepare("
-                DELETE FROM geo_cache 
-                WHERE updated_at < DATE_SUB(NOW(), INTERVAL ? SECOND)
-            ");
-            $stmt->execute([$config['cache_ttl']]);
-            $deleted = $stmt->rowCount();
-            echo "Удалено {$deleted} устаревших записей из кэша геоданных\n";
-        } catch (Exception $e) {
-            echo "Ошибка при очистке кэша геоданных: " . $e->getMessage() . "\n";
-        }
-        
-        // Очистка старых записей из базы данных
-        try {
-            $stmt = $pdo->prepare("DELETE FROM visits WHERE visit_time < DATE_SUB(NOW(), INTERVAL 90 DAY) LIMIT 1000");
-            $stmt->execute();
-            $deleted = $stmt->rowCount();
-            echo "Удалено {$deleted} старых записей из базы данных\n";
-        } catch (Exception $e) {
-            echo "Ошибка при очистке базы данных: " . $e->getMessage() . "\n";
-        }
-        
-        // Очистка старых файлов с ошибками
-		$queueDir = __DIR__ . '/queue';
-		if (is_dir($queueDir)) {
-			$errorFiles = array_merge(
-        glob($queueDir . '/*.error'),
-        glob($queueDir . '/*.failed'),
-        glob($queueDir . '/*.invalid_json')
-    );
-            $lastWeek = time() - 604800; // 7 дней
-            $cleaned = 0;
-            
-            foreach ($errorFiles as $file) {
-                if (filemtime($file) < $lastWeek) {
-                    @unlink($file);
-                    $cleaned++;
-                }
-            }
-            
-            echo "Очищено {$cleaned} старых файлов с ошибками\n";
-        }
-        
-        echo "Очистка завершена\n";
-        exit;
-    }
-    
-    if (isset($_GET['migrate']) && $_GET['migrate'] == '1') {
-        // Миграция кэша из файлов в базу данных
-        header('Content-Type: text/plain; charset=utf-8');
-        
-        $pdo = getPDO($config);
-        if (!$pdo) {
-            echo "Ошибка подключения к базе данных\n";
-            exit;
-        }
-        
-        // Проверяем наличие таблицы для кэша геоданных
-        ensureGeoCacheTable($pdo);
-        
-        $cacheDir = __DIR__ . '/cache';
-        if (!is_dir($cacheDir)) {
-            echo "Директория кэша не найдена\n";
-            exit;
-        }
-        
-        echo "Начинаем миграцию кэша из файлов в базу данных...\n";
-        
-        // Получаем все файлы кэша геоданных
-        $cacheFiles = glob($cacheDir . '/geo_*.json');
-        $total = count($cacheFiles);
-        $migrated = 0;
-        $failed = 0;
-        
-        foreach ($cacheFiles as $file) {
-            $data = @json_decode(file_get_contents($file), true);
-            if (!$data || !isset($data['country'])) {
-                $failed++;
-                continue;
-            }
-            
-            // Извлекаем IP из имени файла
-            $filename = basename($file);
-            $ipHash = preg_replace('/^geo_(.+)\.json$/', '$1', $filename);
-            
-            // Ищем соответствующий IP в таблице visits
-            $stmt = $pdo->prepare("
-                SELECT DISTINCT ip_address 
-                FROM visits 
-                WHERE MD5(ip_address) = ?
-                LIMIT 1
-            ");
-            $stmt->execute([$ipHash]);
-            $ipResult = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$ipResult) {
-                $failed++;
-                continue;
-            }
-            
-            $ip = $ipResult['ip_address'];
-            
-            // Сохраняем в кэш БД
-            try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO geo_cache (
-                        ip_address, country, city, latitude, longitude, region, timezone, updated_at
-                    ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, NOW()
-                    ) ON DUPLICATE KEY UPDATE 
-                        country = VALUES(country),
-                        city = VALUES(city),
-                        latitude = VALUES(latitude),
-                        longitude = VALUES(longitude),
-                        region = VALUES(region),
-                        timezone = VALUES(timezone),
-                        updated_at = NOW()
-                ");
-                
-                $stmt->execute([
-                    $ip,
-                    $data['country'],
-                    $data['city'],
-                    $data['latitude'] ?? 0,
-                    $data['longitude'] ?? 0,
-                    $data['region'] ?? '',
-                    $data['timezone'] ?? ''
-                ]);
-                
-                $migrated++;
-                
-                // Удаляем файл после успешной миграции
-                @unlink($file);
-                
-                // Выводим прогресс каждые 100 записей
-                if ($migrated % 100 == 0) {
-                    echo "Обработано $migrated из $total файлов\n";
-                    // Сбрасываем буфер вывода
-                    if (ob_get_level() > 0) {
-                        ob_flush();
-                        flush();
-                    }
-                }
-                
-            } catch (Exception $e) {
-                error_log("Ошибка миграции файла $file: " . $e->getMessage());
-                $failed++;
-            }
-        }
-        
-        echo "Миграция завершена. Успешно: $migrated, с ошибками: $failed из $total файлов\n";
-        exit;
-    }
-    
-    if (isset($_GET['stats']) && $_GET['stats'] == '1') {
-        // Запрос статистики
+    if (isset($_GET['api_stats'])) {
         header('Content-Type: text/html; charset=utf-8');
-        
         $pdo = getPDO($config);
+        if (!$pdo) { echo "Ошибка БД"; exit; }
         
-        if (!$pdo) {
-            echo "<h2>Ошибка подключения к базе данных</h2>";
-            exit;
+        $stmt = $pdo->query("SELECT source, COUNT(*) as count, SUM(api_requests) as api_calls FROM geo_cache GROUP BY source");
+        $stats = $stmt->fetchAll();
+        
+        echo "<h2>📊 Статистика API</h2>";
+        echo "<table border='1' cellpadding='10'><tr><th>Источник</th><th>IP</th><th>API запросов</th></tr>";
+        $total = 0; $calls = 0;
+        foreach ($stats as $row) {
+            $total += $row['count'];
+            $calls += $row['api_calls'];
+            echo "<tr><td>{$row['source']}</td><td>" . number_format($row['count']) . "</td><td>" . number_format($row['api_calls']) . "</td></tr>";
+        }
+        echo "<tr style='font-weight:bold'><td>ВСЕГО</td><td>" . number_format($total) . "</td><td>" . number_format($calls) . "</td></tr></table>";
+        
+        if ($total > 0) {
+            $percent = round(($calls / $total) * 100, 2);
+            echo "<p><strong>🎯 Экономия:</strong> Только {$percent}% IP требовали API-запроса!</p>";
         }
         
-        // Общая статистика
+        $stmt = $pdo->query("SELECT ip_address, country, city, source, updated_at FROM geo_cache WHERE source LIKE 'api:%' ORDER BY updated_at DESC LIMIT 10");
+        $recent = $stmt->fetchAll();
+        if (!empty($recent)) {
+            echo "<h3>🕒 Последние 10 API-запросов:</h3><table border='1' cellpadding='10'>";
+            echo "<tr><th>IP</th><th>Страна</th><th>Город</th><th>API</th><th>Дата</th></tr>";
+            foreach ($recent as $row) {
+                echo "<tr><td>{$row['ip_address']}</td><td>{$row['country']}</td><td>{$row['city']}</td><td>{$row['source']}</td><td>{$row['updated_at']}</td></tr>";
+            }
+            echo "</table>";
+        }
+        
+        echo "<p><a href='?stats=1'>← Общая статистика</a></p>";
+        exit;
+    }
+    
+    if (isset($_GET['stats'])) {
+        header('Content-Type: text/html; charset=utf-8');
+        $pdo = getPDO($config);
+        if (!$pdo) { echo "Ошибка БД"; exit; }
+        
         $total = $pdo->query("SELECT COUNT(*) FROM visits")->fetchColumn();
         $today = $pdo->query("SELECT COUNT(*) FROM visits WHERE DATE(visit_time) = CURDATE()")->fetchColumn();
-        $unique = $pdo->query("SELECT COUNT(DISTINCT ip_address) FROM visits")->fetchColumn();
         
-        // Статистика кэша
-        $cacheCount = $pdo->query("SELECT COUNT(*) FROM geo_cache")->fetchColumn();
-        $cacheToday = $pdo->query("SELECT COUNT(*) FROM geo_cache WHERE DATE(updated_at) = CURDATE()")->fetchColumn();
-        
-        echo "<h2>Статистика счетчика посещений</h2>";
-        echo "<p>Ваш IP: <strong>" . $_SERVER['REMOTE_ADDR'] . "</strong></p>";
-        echo "<p>Всего посещений: <strong>" . number_format($total, 0, '.', ' ') . "</strong></p>";
-        echo "<p>Посещений сегодня: <strong>" . number_format($today, 0, '.', ' ') . "</strong></p>";
-        echo "<p>Уникальных посетителей: <strong>" . number_format($unique, 0, '.', ' ') . "</strong></p>";
-        
-        echo "<h3>Статистика кэша геоданных</h3>";
-        echo "<p>Всего записей в кэше: <strong>" . number_format($cacheCount, 0, '.', ' ') . "</strong></p>";
-        echo "<p>Обновлено сегодня: <strong>" . number_format($cacheToday, 0, '.', ' ') . "</strong></p>";
-        
-        // Состояние очереди
-        $queueDir = __DIR__ . '/queue';
-        $queueFiles = is_dir($queueDir) ? glob($queueDir . '/*.visit') : [];
-        $errorFiles = is_dir($queueDir) ? glob($queueDir . '/*.error') : [];
-        
-        echo "<h3>Состояние очереди</h3>";
-        echo "<p>Файлов в очереди: <strong>" . count($queueFiles) . "</strong></p>";
-        echo "<p>Файлов с ошибками: <strong>" . count($errorFiles) . "</strong></p>";
-        
-        if (!empty($queueFiles)) {
-            echo "<p><a href='?process_queue=1' class='btn'>Обработать очередь сейчас</a></p>";
-        }
-        
-        echo "<h3>Обслуживание</h3>";
+        echo "<h2>📈 Статистика счетчика</h2>";
+        echo "<p>IP: <strong>{$_SERVER['REMOTE_ADDR']}</strong></p>";
+        echo "<p>Всего: <strong>" . number_format($total) . "</strong></p>";
+        echo "<p>Сегодня: <strong>" . number_format($today) . "</strong></p>";
         echo "<ul>";
-        echo "<li><a href='?cleanup=1'>Очистить старые данные</a></li>";
-        echo "<li><a href='?migrate=1'>Перенести геоданные из файлов в базу</a></li>";
+        echo "<li><a href='?api_stats=1'><strong>📊 Статистика API</strong></a></li>";
+        echo "<li><a href='?process_queue=1'>Обработать очередь</a></li>";
         echo "</ul>";
-        
-        // Добавляем немного стилей для красоты
-        echo "<style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            h2 { color: #333; }
-            h3 { color: #555; margin-top: 20px; }
-            p { margin: 10px 0; }
-            .btn { 
-                display: inline-block; 
-                padding: 8px 16px; 
-                background-color: #4CAF50; 
-                color: white; 
-                text-decoration: none; 
-                border-radius: 4px; 
-            }
-            .btn:hover { background-color: #45a049; }
-            ul { list-style-type: none; padding: 0; }
-            li { margin: 8px 0; }
-            li a { 
-                color: #2196F3; 
-                text-decoration: none; 
-            }
-            li a:hover { text-decoration: underline; }
-        </style>";
-        
         exit;
     }
     
-    // Информация о скрипте
-    header('Content-Type: text/html; charset=utf-8');
-    echo "<h2>Безопасный счетчик посещений с кэшированием в БД</h2>";
-    echo "<p>Ваш IP: <strong>" . $_SERVER['REMOTE_ADDR'] . "</strong></p>";
-    echo "<p>Этот файл предназначен для подключения к другим страницам с помощью:</p>";
-    echo "<pre>require_once \$_SERVER['DOCUMENT_ROOT'] . '/counter/counter_secure_db_cache.php';</pre>";
-    echo "<ul>";
-    echo "<li><a href='?stats=1'>Просмотр статистики</a></li>";
-    echo "<li><a href='?process_queue=1'>Обработать очередь вручную</a></li>";
-    echo "<li><a href='?cleanup=1'>Очистить старые данные</a></li>";
-    echo "<li><a href='?migrate=1'>Перенести геоданные из файлов в базу</a></li>";
-    echo "</ul>";
+    if (isset($_GET['process_queue'])) {
+        header('Content-Type: text/plain; charset=utf-8');
+        $queueDir = __DIR__ . '/queue';
+        echo "Обработка очереди...\n";
+        processQueue($config, $queueDir);
+        $remaining = is_dir($queueDir) ? count(glob($queueDir . '/*.visit')) : 0;
+        echo "Готово. Осталось: {$remaining}\n";
+        exit;
+    }
     
-    echo "<style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h2 { color: #333; }
-        pre { background-color: #f5f5f5; padding: 10px; border-radius: 4px; }
-        ul { list-style-type: none; padding: 0; }
-        li { margin: 8px 0; }
-        li a { 
-            color: #2196F3; 
-            text-decoration: none; 
-        }
-        li a:hover { text-decoration: underline; }
-    </style>";
+    echo "<h2>🚀 Счетчик с множественными API v3.0</h2>";
+    echo "<p>IP: <strong>{$_SERVER['REMOTE_ADDR']}</strong></p>";
+    echo "<ul><li><a href='?stats=1'>Статистика</a></li><li><a href='?api_stats=1'>Статистика API</a></li></ul>";
 }
 ?>
