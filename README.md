@@ -114,7 +114,7 @@ $config = [
 ### 4. Creating the Database Structure
 
 Run the SQL script to create tables:
-
+```
 -- ============================================
 -- SQL скрипт для создания таблиц счетчика
 -- Версия: 3.2
@@ -127,7 +127,7 @@ Run the SQL script to create tables:
 -- 1. ТАБЛИЦА ПОСЕЩЕНИЙ (visits)
 -- ============================================
 
-```CREATE TABLE IF NOT EXISTS `visits` (
+CREATE TABLE IF NOT EXISTS `visits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `page_url` varchar(500) NOT NULL,
   `ip_address` varchar(45) NOT NULL,
@@ -183,9 +183,10 @@ CREATE TABLE IF NOT EXISTS `geo_cache` (
 -- ============================================
 -- ГОТОВО!
 -- ============================================
-```
+
 -- Таблицы созданы успешно.
 -- Теперь можно использовать счетчик.
+```
 
 ### 5. Creating an Admin User
 
