@@ -26,7 +26,8 @@ $config = [
     'db_user' => 'site_counter',
     'db_pass' => 'site_counter',
     'count_unique_ip' => true,
-    'count_interval' => 3600,
+    'count_interval' => 86400,  // 86400 = 24 часа (уникальные посетители за день)
+    'count_by_page' => false,   // false = один IP один раз на весь сайт, true = отдельно на каждой странице
     'excluded_ips' => ['127.0.0.1'],
     'mmdb_path' => __DIR__ . '/GeoLite2-City.mmdb',
     'sxgeo_path' => __DIR__ . '/SxGeoCity.dat',
@@ -65,7 +66,7 @@ $config = [
         'ipinfo' => [
             'enabled' => true,
             'url' => 'https://ipinfo.io/{ip}/json',
-            'token' => '757611333',
+            'token' => '757611f33',
             'priority' => 5
         ]
     ]
@@ -107,8 +108,15 @@ try {
     ensureGeoCacheTable($pdo);
     
     if ($config['count_unique_ip']) {
-        $stmt = $pdo->prepare("SELECT 1 FROM visits WHERE ip_address = ? AND page_url = ? AND visit_time > DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1");
-        $stmt->execute([$current_ip, $pageUrl, $config['count_interval']]);
+        if ($config['count_by_page']) {
+            // Уникальность по IP + страница + интервал
+            $stmt = $pdo->prepare("SELECT 1 FROM visits WHERE ip_address = ? AND page_url = ? AND visit_time > DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1");
+            $stmt->execute([$current_ip, $pageUrl, $config['count_interval']]);
+        } else {
+            // Уникальность только по IP + интервал (весь сайт)
+            $stmt = $pdo->prepare("SELECT 1 FROM visits WHERE ip_address = ? AND visit_time > DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1");
+            $stmt->execute([$current_ip, $config['count_interval']]);
+        }
         if ($stmt->fetchColumn()) return;
     }
     
@@ -353,31 +361,57 @@ function getGeoDataImproved($pdo, $ip, $config) {
 }
 
 /**
- * ФУНКЦИЯ МНОЖЕСТВЕННЫХ API - пробует все API по очереди
+ * ФУНКЦИЯ МНОЖЕСТВЕННЫХ API - пробует все API пока не найдет реальную информацию
  */
 function getGeoFromMultipleAPIs($ip, $config) {
     $providers = $config['api_providers'];
     uasort($providers, function($a, $b) { return ($a['priority'] ?? 999) - ($b['priority'] ?? 999); });
+    
+    $bestResult = null;  // Лучший результат (даже если "Неизвестно")
     
     foreach ($providers as $name => $provider) {
         if (!($provider['enabled'] ?? true)) continue;
         
         $result = callAPI($name, $provider, $ip, $config);
         
-        if ($result && $result['country'] != 'Неизвестно') {
-            if ($config['enable_api_logging'] ?? false) {
-                error_log("✅ API {$name}: успех для {$ip}");
+        if ($result) {
+            // Если нашли РЕАЛЬНУЮ информацию (не "Неизвестно") - возвращаем сразу
+            if ($result['country'] != 'Неизвестно' && $result['city'] != 'Неизвестно') {
+                if ($config['enable_api_logging'] ?? false) {
+                    error_log("✅ API {$name}: найдена полная информация для {$ip}");
+                }
+                return $result;
             }
-            return $result;
-        }
-        
-        if ($config['enable_api_logging'] ?? false) {
-            error_log("❌ API {$name}: не сработал для {$ip}");
+            
+            // Если хоть что-то нашли (хотя бы страну) - сохраняем как лучший результат
+            if ($result['country'] != 'Неизвестно' && !$bestResult) {
+                $bestResult = $result;
+                if ($config['enable_api_logging'] ?? false) {
+                    error_log("✅ API {$name}: найдена частичная информация для {$ip} (только страна)");
+                }
+            }
+            
+            if ($config['enable_api_logging'] ?? false) {
+                error_log("⚠️ API {$name}: информация неполная для {$ip}, пробую следующий API");
+            }
+        } else {
+            if ($config['enable_api_logging'] ?? false) {
+                error_log("❌ API {$name}: не ответил для {$ip}");
+            }
         }
     }
     
+    // Если нашли хоть что-то - возвращаем лучший результат
+    if ($bestResult) {
+        if ($config['enable_api_logging'] ?? false) {
+            error_log("✅ Использую лучший результат для {$ip} из проверенных API");
+        }
+        return $bestResult;
+    }
+    
+    // Все API провалились
     if ($config['enable_api_logging'] ?? false) {
-        error_log("⚠️ Все API провалились для {$ip}");
+        error_log("⚠️ Все API провалились для {$ip} - информация не найдена");
     }
     return null;
 }
@@ -621,4 +655,3 @@ if (basename($_SERVER['SCRIPT_FILENAME']) == basename(__FILE__)) {
     echo "<ul><li><a href='?stats=1'>Статистика</a></li><li><a href='?api_stats=1'>Статистика API</a></li></ul>";
 }
 ?>
-
