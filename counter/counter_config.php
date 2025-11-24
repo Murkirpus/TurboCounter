@@ -36,11 +36,12 @@ $sites_config = array (
 // Общие настройки (применяются ко всем сайтам)
 $config = array (
   'db_host' => 'localhost',
-  'db_name' => 'site_counter',
-  'db_user' => 'site_counter',
-  'db_pass' => 'site_counter',
+  'db_name' => 'dj-x.info_counter',
+  'db_user' => 'dj-x.info_counter',
+  'db_pass' => 'dj-x.info_counter',
   'count_unique_ip' => true,
   'count_interval' => 86400,
+  'count_by_page' => false,  // false = один IP считается один раз на весь сайт
   'excluded_ips' => 
   array (
     0 => '127.0.0.1',
@@ -49,7 +50,7 @@ $config = array (
   'sxgeo_path' => 'SxGeoCity.dat',
   'use_external_api' => true,
   'api_url' => 'https://ipinfo.io/{ip}/json',
-  'api_token' => '757611333',
+  'api_token' => '757611f45a9c65',
   'counter_style' => 'simple',
   'items_per_page' => 25,
   'max_queue_size' => 1000,
@@ -76,8 +77,9 @@ $config = array (
   'enable_api_logging' => false,
   
   // Настройка множественных API
-  // Система автоматически пробует каждый API по порядку priority
-  // Если один не работает - переключается на следующий
+  // Система пробует каждый API по порядку priority пока не найдет РЕАЛЬНУЮ информацию
+  // Если API вернул "Неизвестно" - пробует следующий API
+  // Останавливается когда находит и страну, и город
   'api_providers' => array(
     
     // 1. ip-api.com - ПЕРВЫЙ (БЕЗ РЕГИСТРАЦИИ, БЫСТРЫЙ)
@@ -120,7 +122,7 @@ $config = array (
     'ipinfo' => array(
       'enabled' => true,
       'url' => 'https://ipinfo.io/{ip}/json',
-      'token' => '757611f45a9c65',  // Ваш токен из api_token
+      'token' => '757611f4533',  // Ваш токен из api_token
       'priority' => 5,
       'limit' => '50k/месяц',
       'description' => 'Ваш основной API (используется последним как запасной)'
