@@ -65,7 +65,7 @@ $config = [
         'ipinfo' => [
             'enabled' => true,
             'url' => 'https://ipinfo.io/{ip}/json',
-            'token' => '757611f45a9c65',
+            'token' => '757611333',
             'priority' => 5
         ]
     ]
@@ -621,3 +621,4 @@ if (basename($_SERVER['SCRIPT_FILENAME']) == basename(__FILE__)) {
     echo "<ul><li><a href='?stats=1'>Статистика</a></li><li><a href='?api_stats=1'>Статистика API</a></li></ul>";
 }
 ?>
+
