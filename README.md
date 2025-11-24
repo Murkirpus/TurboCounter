@@ -1,4 +1,6 @@
 # TurboCounter + many sites
+🚀 Счетчик с множественными API v3.0
+Обновлено 24.11.2025
 
 Modern visitor counter with geolocation and DDoS protection
 A powerful tool for tracking and analyzing website visits with low server load
