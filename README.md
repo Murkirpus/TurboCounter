@@ -115,52 +115,77 @@ $config = [
 
 Run the SQL script to create tables:
 
-```sql
--- Visits table
-CREATE TABLE `visits` (
+-- ============================================
+-- SQL скрипт для создания таблиц счетчика
+-- Версия: 3.2
+-- ============================================
+
+-- Использование базы данных (раскомментируйте и укажите имя вашей БД)
+-- USE site_counter;
+
+-- ============================================
+-- 1. ТАБЛИЦА ПОСЕЩЕНИЙ (visits)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `visits` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `page_url` varchar(2048) NOT NULL,
+  `page_url` varchar(500) NOT NULL,
   `ip_address` varchar(45) NOT NULL,
   `user_agent` text,
-  `visit_time` datetime NOT NULL,
-  `referer` varchar(255) DEFAULT NULL,
-  `country` varchar(100) DEFAULT 'Unknown',
-  `city` varchar(100) DEFAULT 'Unknown',
-  `latitude` float DEFAULT '0',
-  `longitude` float DEFAULT '0',
-  `region` varchar(100) DEFAULT '',
-  `timezone` varchar(50) DEFAULT '',
+  `visit_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `referer` varchar(500) DEFAULT NULL,
+  `country` varchar(100) DEFAULT 'Неизвестно',
+  `city` varchar(100) DEFAULT 'Неизвестно',
   `browser` varchar(50) DEFAULT 'Other',
-  `device` varchar(20) DEFAULT 'Desktop',
-  PRIMARY KEY (`id`),
-  KEY `idx_ip_page_time` (`ip_address`,`page_url`,`visit_time`),
-  KEY `idx_visit_time` (`visit_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Geodata cache table
-CREATE TABLE `geo_cache` (
-  `ip_address` varchar(45) PRIMARY KEY,
-  `country` varchar(100) NOT NULL DEFAULT 'Unknown',
-  `city` varchar(100) NOT NULL DEFAULT 'Unknown',
+  `device` varchar(50) DEFAULT 'Desktop',
   `latitude` float DEFAULT 0,
   `longitude` float DEFAULT 0,
   `region` varchar(100) DEFAULT '',
   `timezone` varchar(50) DEFAULT '',
-  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_geo_cache_updated ON geo_cache(updated_at);
-
--- Users table for admin panel
-CREATE TABLE `users` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) NOT NULL,
-  `password` varchar(255) NOT NULL,
-  `email` varchar(100) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `username` (`username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
+  KEY `idx_ip_address` (`ip_address`),
+  KEY `idx_visit_time` (`visit_time`),
+  KEY `idx_page_url` (`page_url`(191)),
+  KEY `idx_country` (`country`),
+  KEY `idx_ip_time` (`ip_address`, `visit_time`),
+  KEY `idx_ip_page_time` (`ip_address`, `page_url`(191), `visit_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- 2. ТАБЛИЦА КЭША ГЕОДАННЫХ (geo_cache)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `geo_cache` (
+  `ip_address` varchar(45) NOT NULL,
+  `country` varchar(100) NOT NULL DEFAULT 'Неизвестно',
+  `city` varchar(100) NOT NULL DEFAULT 'Неизвестно',
+  `latitude` float DEFAULT 0,
+  `longitude` float DEFAULT 0,
+  `region` varchar(100) DEFAULT '',
+  `timezone` varchar(50) DEFAULT '',
+  `source` enum('local','api','unknown') DEFAULT 'unknown',
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `api_requests` int(11) DEFAULT 0,
+  PRIMARY KEY (`ip_address`),
+  KEY `idx_geo_cache_updated` (`updated_at`),
+  KEY `idx_geo_cache_source` (`source`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- 3. ПРОВЕРКА СОЗДАННЫХ ТАБЛИЦ
+-- ============================================
+
+-- Раскомментируйте для проверки:
+-- SHOW TABLES;
+-- DESCRIBE visits;
+-- DESCRIBE geo_cache;
+
+-- ============================================
+-- ГОТОВО!
+-- ============================================
+
+-- Таблицы созданы успешно.
+-- Теперь можно использовать счетчик.
 
 ### 5. Creating an Admin User
 
